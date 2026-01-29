@@ -91,7 +91,7 @@ let signMesh = null;
 let signCanvas = null;
 let signCtx = null;
 let signTex = null;
-let currentSignText = '哥布林';
+let currentSignText = '你想喷谁（自定义）';
 
 /* ================= 语音喷他（移动端优先） ================= */
 const voiceBall = document.getElementById('voiceBall');
