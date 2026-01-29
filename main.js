@@ -69,6 +69,10 @@ let currentSignText = '你好';
 
 /* ================= 语音喷他（移动端优先） ================= */
 const voiceBall = document.getElementById('voiceBall');
+const voiceModal = document.getElementById('voiceModal');
+const voiceInput = document.getElementById('voiceInput');
+const voiceSend = document.getElementById('voiceSend');
+const voiceCancel = document.getElementById('voiceCancel');
 let isVoiceRecording = false;
 let speechRecognizer = null;
 let mediaStream = null;
@@ -83,6 +87,7 @@ let micSourceNode = null;
 let volumeData = null;
 let currentLoudness = 0;
 let peakLoudness = 0;
+let pendingVoiceAmp = 1;
 
 // “脸部中心”目标（人物局部坐标）
 let faceTargetLocal = new THREE.Vector3(0, 1.7, 0.35);
@@ -110,6 +115,29 @@ const hitReplyTexts = [
   '嘴下留情！',
   '打脸就过分了！'
 ];
+
+// 冲走后的“从天而降”口号
+const flushSlogans = [
+  '冲走了，压力也走了。',
+  '好了，先把烦恼冲下去。',
+  '呼——这一波，算你赢。',
+  '别急，先把心情清空一下。',
+  '今天就到这儿，明天再说。',
+  '已冲走：烦恼.exe',
+  '压力：已清空（回收站）。',
+  '冲走成功！请勿回收。',
+  '已完成：情绪卸载 100%。',
+  '冲走了！谁都别拦我快乐！',
+  '冲走的是压力，不是你。',
+  '把糟心事冲走，把自己留下。',
+  '讨厌的事：拜拜了您嘞。',
+  '不爽归不爽，先冲掉再讲。',
+  '世界很吵，先让它安静一秒。',
+  '冲走了。\n你也该轻一点了。',
+  '压力下去了。\n你还在。',
+  '这一坨烦恼没了。\n下一口气更顺。'
+];
+const sloganDrops = [];
 
 loadPersonModel();
 setupSignUI();
@@ -218,6 +246,22 @@ function setupSignUI() {
 function setupVoiceSpray() {
   if (!voiceBall) return;
   voiceBall.addEventListener('click', toggleVoiceRecording);
+
+  if (voiceSend && voiceCancel && voiceModal && voiceInput) {
+    voiceSend.addEventListener('click', () => {
+      const txt = (voiceInput.value || '').trim();
+      const content = txt || '（气到说不出话）';
+      shootVoiceText(content, pendingVoiceAmp || 1);
+      closeVoiceModal();
+    });
+    voiceCancel.addEventListener('click', () => {
+      // 取消时也可以给一个轻微文字，不那么空
+      if (!voiceInput.value.trim()) {
+        shootVoiceText('……', Math.max(pendingVoiceAmp * 0.8, 0.7));
+      }
+      closeVoiceModal();
+    });
+  }
 }
 
 async function toggleVoiceRecording() {
@@ -333,16 +377,23 @@ function stopVoiceRecording() {
   }
 
   const finalText = (liveVoiceText || '').trim() || '...';
-  const textToShoot = usedWebSpeech
-    ? finalText
-    : '（未支持实时语音，请改用 Android Chrome 或接入后端识别）';
 
-  // 发射动画
-  const vol = Math.max(peakLoudness, currentLoudness, 0.02);
   // 把音量粗略映射到 [0.7, 2.3] 的放大系数
+  const vol = Math.max(peakLoudness, currentLoudness, 0.02);
   const norm = clamp(vol / 0.35, 0, 2);
   const amp = clamp(0.7 + norm * 1.6, 0.7, 2.3);
-  shootVoiceText(textToShoot, amp);
+  pendingVoiceAmp = amp;
+
+  if (usedWebSpeech) {
+    // 桌面浏览器 / 支持 Web Speech：直接用识别的中文发射
+    shootVoiceText(finalText, amp);
+  } else if (voiceModal && voiceInput && voiceSend) {
+    // 移动端 / 不支持实时语音：弹出输入弹窗，请用户打字
+    openVoiceModal(finalText);
+  } else {
+    // 兜底：仍然给一条占位提示
+    shootVoiceText('（未支持实时语音，请改用更高版本浏览器或接入后端识别）', amp);
+  }
 
   // 清理录音中的临时气泡
   if (liveVoiceSprite) {
@@ -449,6 +500,22 @@ async function ensureVolumeMonitor(streamOverride) {
   } catch (e) {
     // 静默失败：没有音量检测时退回默认动画强度
   }
+}
+
+function openVoiceModal(defaultText) {
+  if (!voiceModal || !voiceInput) return;
+  voiceInput.value = (defaultText || '').trim();
+  voiceModal.hidden = false;
+  // 简单聚焦，移动端可能会触发软键盘
+  setTimeout(() => {
+    try { voiceInput.focus(); } catch {}
+  }, 50);
+}
+
+function closeVoiceModal() {
+  if (!voiceModal || !voiceInput) return;
+  voiceModal.hidden = true;
+  voiceInput.value = '';
 }
 
 function drawBubbleToTexture(text, opts = {}) {
@@ -715,6 +782,39 @@ function spawnHitReplyBubble() {
   });
 }
 
+function spawnFlushSlogan() {
+  if (!flushSlogans.length) return;
+  const raw = flushSlogans[Math.floor(Math.random() * flushSlogans.length)];
+  const text = raw.trim();
+
+  // 生成大号卡通文字 Sprite
+  const sp = createTextBubbleSprite(text, {
+    fontSize: 88,
+    padding: 70,
+    maxWidth: 720,
+  });
+
+  // 出生在人物头顶偏上的高空，从天而降
+  const start = new THREE.Vector3(0, 7.5, 0);
+  const end = new THREE.Vector3(0, 3.0, 0);
+  sp.position.copy(start);
+  sp.scale.set(4.5, 3.4, 1);
+  sp.material.opacity = 0;
+  // 始终绘制在最前面，不被场景遮挡
+  sp.material.depthTest = false;
+  sp.material.depthWrite = false;
+  sp.renderOrder = 999;
+  scene.add(sp);
+
+  sloganDrops.push({
+    sprite: sp,
+    start,
+    end,
+    t: 0,
+    duration: 3.0,
+  });
+}
+
 function disposeSprite(sprite) {
   if (!sprite) return;
   const mat = sprite.material;
@@ -836,6 +936,8 @@ function createEgg() {
 
   scene.add(egg);
   eggs.push(egg);
+
+  playEggThrowSound();
 }
 
 document.getElementById('eggBtn').onclick = createEgg;
@@ -950,6 +1052,8 @@ flushBtn.onclick = () => {
   isFlushing = true;
   flushBtn.disabled = true;
 
+  playFlushSound();
+
   const startPos = person.position.clone();
   const startScale = person.scale.clone();
   const startRot = person.rotation.clone();
@@ -994,7 +1098,8 @@ flushBtn.onclick = () => {
 };
 
 function resetAfterFlush() {
-  // 重置人物
+  // 先让人物“消失”，再在 3 秒后重新出现
+  person.visible = false;
   person.position.set(0, 0, 0);
   person.scale.set(1, 1, 1);
   person.rotation.set(0, 0, 0);
@@ -1003,8 +1108,14 @@ function resetAfterFlush() {
   water.scale.set(1, 1, 1);
   water.rotation.set(-Math.PI / 2, 0, 0);
 
-  flushBtn.disabled = false;
-  isFlushing = false;
+  // 此时仍视为 flushing 中，按钮继续禁用
+  spawnFlushSlogan();
+
+  setTimeout(() => {
+    person.visible = true;
+    flushBtn.disabled = false;
+    isFlushing = false;
+  }, 3000);
 }
 
 
@@ -1041,6 +1152,17 @@ function createClothTexture() {
 /* ================= 动画循环 ================= */
 let shake = 0;
 const clock = new THREE.Clock();
+
+// 简单全局音频上下文
+let globalAudioCtx = null;
+
+function getAudioContext() {
+  if (globalAudioCtx) return globalAudioCtx;
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return null;
+  globalAudioCtx = new Ctx();
+  return globalAudioCtx;
+}
 
 function animate() {
   requestAnimationFrame(animate);
@@ -1091,6 +1213,69 @@ function animate() {
 }
 
 animate();
+
+function playFlushSound() {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  if (ctx.state === 'suspended') ctx.resume();
+
+  const duration = 1.4;
+  const now = ctx.currentTime;
+
+  // 白噪声 + 低通扫频，模拟水流
+  const bufferSize = ctx.sampleRate * duration;
+  const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+  const data = noiseBuffer.getChannelData(0);
+  for (let i = 0; i < bufferSize; i++) {
+    data[i] = (Math.random() * 2 - 1) * 0.7;
+  }
+
+  const noise = ctx.createBufferSource();
+  noise.buffer = noiseBuffer;
+
+  const filter = ctx.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.frequency.setValueAtTime(900, now);
+  filter.frequency.exponentialRampToValueAtTime(260, now + duration);
+
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0, now);
+  gain.gain.linearRampToValueAtTime(0.6, now + 0.1);
+  gain.gain.linearRampToValueAtTime(0.0, now + duration);
+
+  noise.connect(filter);
+  filter.connect(gain);
+  gain.connect(ctx.destination);
+
+  noise.start(now);
+  noise.stop(now + duration + 0.05);
+}
+
+function playEggThrowSound() {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  if (ctx.state === 'suspended') ctx.resume();
+
+  const now = ctx.currentTime;
+  const duration = 0.18;
+
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(260, now);
+  osc.frequency.exponentialRampToValueAtTime(120, now + duration);
+
+  gain.gain.setValueAtTime(0, now);
+  gain.gain.linearRampToValueAtTime(0.55, now + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+
+  osc.start(now);
+  osc.stop(now + duration + 0.02);
+}
 
 function updateVoiceEffects(dt) {
   // 录音时，实时更新音量（RMS）
@@ -1166,6 +1351,39 @@ function updateVoiceEffects(dt) {
       scene.remove(item.sprite);
       disposeSprite(item.sprite);
       hitReplyBubbles.splice(i, 1);
+    }
+  }
+
+  // 冲走后从天而降的大字口号
+  for (let i = sloganDrops.length - 1; i >= 0; i--) {
+    const item = sloganDrops[i];
+    item.t += dt / Math.max(item.duration, 0.0001);
+    const t2 = Math.min(item.t, 1);
+
+    // 下落 + 轻微弹跳
+    const fall = easeOutCubic(t2);
+    const pos = item.start.clone().lerp(item.end, fall);
+    if (t2 > 0.8) {
+      const bounce = Math.sin((t2 - 0.8) / 0.2 * Math.PI) * 0.15;
+      pos.y += bounce;
+    }
+    item.sprite.position.copy(pos);
+
+    // 淡入然后缓慢淡出
+    const fadeIn = clamp(t2 * 2.2, 0, 1);
+    const fadeOut = clamp(1 - Math.max(t2 - 0.4, 0) / 0.6, 0, 1);
+    item.sprite.material.opacity = fadeIn * fadeOut;
+
+    // 轻微缩放 & 摆动，卡通感
+    const baseScale = 4.5;
+    const pulse = 1 + Math.sin(t2 * Math.PI) * 0.06;
+    item.sprite.scale.set(baseScale * pulse, baseScale * 0.75 * pulse, 1);
+    item.sprite.rotation.z = Math.sin(t2 * 3.0) * 0.06;
+
+    if (t2 >= 1) {
+      scene.remove(item.sprite);
+      disposeSprite(item.sprite);
+      sloganDrops.splice(i, 1);
     }
   }
 }

@@ -452,3 +452,75 @@ canvas {
     bottom: 104px; /* 稍微再高一点，避开更高的底部栏 */
   }
 }
+
+/* 语音手动输入弹窗（移动端/无 Web Speech 时用） */
+.voice-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 20;
+}
+
+.voice-modal[hidden] {
+  display: none;
+}
+
+.voice-modal-content {
+  width: 100%;
+  max-width: 480px;
+  margin: 0 8px;
+  margin-bottom: env(safe-area-inset-bottom, 0);
+  background: rgba(255,255,255,0.98);
+  border-radius: 16px 16px 0 0;
+  padding: 12px 14px 10px;
+  box-shadow: 0 -4px 14px rgba(0,0,0,0.18);
+}
+
+.voice-modal-title {
+  font-size: 14px;
+  color: #444;
+  margin-bottom: 6px;
+}
+
+.voice-input {
+  width: 100%;
+  resize: none;
+  border-radius: 10px;
+  border: 1px solid #ddd;
+  padding: 6px 8px;
+  font-size: 14px;
+  line-height: 1.4;
+  box-sizing: border-box;
+}
+
+.voice-input::placeholder {
+  color: #999;
+}
+
+.voice-modal-actions {
+  margin-top: 8px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.voice-modal-actions button {
+  flex: 0 0 auto;
+  min-width: 80px;
+  height: 36px;
+  border-radius: 999px;
+  border: none;
+  font-size: 14px;
+}
+
+.voice-modal-actions #voiceCancel {
+  background: #eee;
+}
+
+.voice-modal-actions #voiceSend {
+  background: #ff4b4b;
+  color: #fff;
+}
