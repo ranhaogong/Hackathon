@@ -1,0 +1,1220 @@
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+/* ================= 基础 ================= */
+const canvas = document.getElementById('three');
+
+/* ================= Three.js 初始化 ================= */
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x1a0000, 6, 12);
+
+const camera = new THREE.PerspectiveCamera(45, canvas.clientWidth / canvas.clientHeight, 0.1, 50);
+camera.position.set(0, 2.4, 6);
+
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMappingExposure = 1.2;
+
+window.addEventListener('resize', () => {
+  camera.aspect = canvas.clientWidth / canvas.clientHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+});
+
+/* ================= 灯光 ================= */
+scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+
+const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 0.6);
+hemi.position.set(0, 4, 0);
+scene.add(hemi);
+
+const spot = new THREE.SpotLight(0xffffff, 3, 24, Math.PI / 5, 0.4, 1);
+spot.position.set(0, 6, 3);
+spot.target.position.set(0, 1.6, 0);
+scene.add(spot);
+scene.add(spot.target);
+
+const fill = new THREE.DirectionalLight(0xffffff, 0.6);
+fill.position.set(-4, 2, 4);
+scene.add(fill);
+
+/* ================= 舞台地面 ================= */
+const stage = new THREE.Mesh(
+  new THREE.CircleGeometry(3, 32),
+  new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.8 })
+);
+stage.rotation.x = -Math.PI / 2;
+scene.add(stage);
+
+/* ================= 人物（GLB 模型容器） ================= */
+const person = new THREE.Group();
+scene.add(person);
+
+// 骨骼动画：受击随机动作
+let modelRoot = null;
+let mixer = null;
+let hitClips = [];
+let currentHitAction = null;
+let lastHitClipName = '';
+let hitRig = null; // 无动画时的“程序受击骨骼”
+
+// 胸前木板（文字牌）
+let signMesh = null;
+let signCanvas = null;
+let signCtx = null;
+let signTex = null;
+let currentSignText = '你好';
+
+/* ================= 语音喷他（移动端优先） ================= */
+const voiceBall = document.getElementById('voiceBall');
+let isVoiceRecording = false;
+let speechRecognizer = null;
+let mediaStream = null;
+let mediaRecorder = null;
+let mediaChunks = [];
+let usedWebSpeech = false;
+
+// 语音音量检测
+let audioContext = null;
+let analyserNode = null;
+let micSourceNode = null;
+let volumeData = null;
+let currentLoudness = 0;
+let peakLoudness = 0;
+
+// “脸部中心”目标（人物局部坐标）
+let faceTargetLocal = new THREE.Vector3(0, 1.7, 0.35);
+
+// 语音临时气泡（录音中实时更新）
+let liveVoiceSprite = null;
+let liveVoiceText = '';
+
+// 飞行中的气泡 + 碎裂碎片
+const flyingTexts = [];
+const shards = [];
+
+// 受击后的回复气泡
+const hitReplyBubbles = [];
+const hitReplyTexts = [
+  '错了错了！',
+  '别打了！',
+  '有话好好说！',
+  '我知道错了还不行吗？',
+  '轻点轻点！',
+  '哎哟～',
+  '饶命啊大哥！',
+  '我再也不敢了！',
+  '冷静冷静……',
+  '嘴下留情！',
+  '打脸就过分了！'
+];
+
+loadPersonModel();
+setupSignUI();
+setupVoiceSpray();
+
+function loadPersonModel() {
+  const loader = new GLTFLoader();
+  loader.load(
+    'assets/model.glb',
+    (gltf) => {
+      // 清空旧人物（如果有）
+      for (let i = person.children.length - 1; i >= 0; i--) person.remove(person.children[i]);
+      mixer = null;
+      modelRoot = null;
+      hitClips = [];
+      currentHitAction = null;
+      lastHitClipName = '';
+      hitRig = null;
+
+      const model = gltf.scene || gltf.scenes?.[0];
+      if (!model) return;
+      modelRoot = model;
+
+      // 让模型更“舞台友好”：开启阴影、统一色彩空间
+      model.traverse((obj) => {
+        if (!obj.isMesh) return;
+        obj.castShadow = true;
+        obj.receiveShadow = true;
+      });
+
+      person.add(model);
+
+      // 初始化骨骼动画（如果 glb 内带动画）
+      if (Array.isArray(gltf.animations) && gltf.animations.length > 0) {
+        mixer = new THREE.AnimationMixer(model);
+        // 优先挑“受击/受伤”相关片段；找不到就用非 idle 片段；再不行就用全部
+        const clips = gltf.animations.slice();
+        const byHit = clips.filter(c => /hit|hurt|impact|damage|react|stun|knock/i.test(c.name));
+        const nonIdle = clips.filter(c => !/idle|stand|breath|loop/i.test(c.name));
+        hitClips = (byHit.length ? byHit : (nonIdle.length ? nonIdle : clips));
+      }
+      // 没有动画也没关系：初始化“程序受击骨骼”
+      hitRig = buildHitRig(model);
+
+      // 自动居中并落地（把模型底部放到 y=0）
+      const box = new THREE.Box3().setFromObject(model);
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+
+      model.position.sub(center); // 先把中心挪到原点
+      // 让脚踩地：把最低点移到 y=0
+      const box2 = new THREE.Box3().setFromObject(model);
+      model.position.y -= box2.min.y;
+
+      // 根据高度自动缩放到接近原卡通人物大小（头顶约 2.2m）
+      const targetHeight = 2.2;
+      const h = Math.max(size.y, 0.0001);
+      const s = targetHeight / h;
+      model.scale.setScalar(s);
+
+      // 缩放后再落地一次，避免浮空
+      const box3 = new THREE.Box3().setFromObject(model);
+      model.position.y -= box3.min.y;
+
+      // 创建/重建胸前木板（挂在 person 上，跟着冲走/旋转一起动）
+      createOrUpdateSignMesh(model);
+      renderSignText(currentSignText);
+
+      // 更新“脸部中心”目标：基于包围盒估算
+      const faceBox = new THREE.Box3().setFromObject(model);
+      const faceSize = faceBox.getSize(new THREE.Vector3());
+      const faceCenter = faceBox.getCenter(new THREE.Vector3());
+      const faceWorld = new THREE.Vector3(
+        faceCenter.x,
+        faceBox.min.y + faceSize.y * 0.78,
+        faceBox.max.z + Math.max(0.06, faceSize.z * 0.04)
+      );
+      faceTargetLocal = person.worldToLocal(faceWorld.clone());
+    },
+    undefined,
+    (err) => {
+      console.error('加载 GLB 失败：', err);
+    }
+  );
+}
+
+function setupSignUI() {
+  const signText = document.getElementById('signText');
+  const signBtn = document.getElementById('signBtn');
+  if (!signText || !signBtn) return;
+
+  // 初始值
+  signText.value = currentSignText;
+
+  const commit = () => {
+    currentSignText = (signText.value || '').trim().slice(0, 20) || '...';
+    renderSignText(currentSignText);
+  };
+
+  signBtn.addEventListener('click', commit);
+  signText.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') commit();
+  });
+}
+
+function setupVoiceSpray() {
+  if (!voiceBall) return;
+  voiceBall.addEventListener('click', toggleVoiceRecording);
+}
+
+async function toggleVoiceRecording() {
+  if (isVoiceRecording) {
+    stopVoiceRecording();
+  } else {
+    await startVoiceRecording();
+  }
+}
+
+function hasWebSpeech() {
+  return typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
+}
+
+async function startVoiceRecording() {
+  if (isVoiceRecording) return;
+  isVoiceRecording = true;
+  voiceBall?.classList?.add('recording');
+
+  currentLoudness = 0;
+  peakLoudness = 0;
+
+  liveVoiceText = '...';
+  ensureLiveVoiceSprite();
+  updateLiveVoiceSprite(liveVoiceText);
+
+  if (hasWebSpeech()) {
+    try {
+      usedWebSpeech = true;
+      await ensureVolumeMonitor();
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      speechRecognizer = new SR();
+      speechRecognizer.lang = 'zh-CN';
+      speechRecognizer.continuous = true;
+      speechRecognizer.interimResults = true;
+
+      speechRecognizer.onresult = (event) => {
+        let interim = '';
+        let fin = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const res = event.results[i];
+          const txt = res[0]?.transcript || '';
+          if (res.isFinal) fin += txt;
+          else interim += txt;
+        }
+        const next = (fin || interim || '').trim();
+        if (next) {
+          liveVoiceText = next;
+          updateLiveVoiceSprite(liveVoiceText);
+        }
+      };
+
+      speechRecognizer.onerror = () => {
+        // 出错也允许用户结束，最终会走占位文本
+      };
+
+      speechRecognizer.onend = () => {
+        // 部分浏览器会自动停止；如果我们还处于录音态，就保持 UI，不自动发射
+      };
+
+      speechRecognizer.start();
+      return;
+    } catch (e) {
+      // Web Speech 初始化失败 → 走 MediaRecorder 降级
+    }
+  }
+
+  // iOS Safari 等：降级录音（不做实时识别）
+  try {
+    usedWebSpeech = false;
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaChunks = [];
+    await ensureVolumeMonitor(mediaStream);
+
+    if (typeof MediaRecorder === 'undefined') {
+      // 彻底不支持录音
+      liveVoiceText = '（未支持实时语音）';
+      updateLiveVoiceSprite(liveVoiceText);
+      return;
+    }
+
+    mediaRecorder = new MediaRecorder(mediaStream);
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) mediaChunks.push(e.data);
+    };
+    mediaRecorder.start();
+  } catch (e) {
+    liveVoiceText = '（麦克风权限被拒绝）';
+    updateLiveVoiceSprite(liveVoiceText);
+  }
+}
+
+function stopVoiceRecording() {
+  if (!isVoiceRecording) return;
+  isVoiceRecording = false;
+  voiceBall?.classList?.remove('recording');
+
+  // 先停 Web Speech
+  if (speechRecognizer) {
+    try { speechRecognizer.stop(); } catch {}
+    speechRecognizer = null;
+  }
+
+  // 再停录音
+  if (mediaRecorder) {
+    try { mediaRecorder.stop(); } catch {}
+    mediaRecorder = null;
+  }
+
+  if (mediaStream) {
+    try { mediaStream.getTracks().forEach(t => t.stop()); } catch {}
+    mediaStream = null;
+  }
+
+  const finalText = (liveVoiceText || '').trim() || '...';
+  const textToShoot = usedWebSpeech
+    ? finalText
+    : '（未支持实时语音，请改用 Android Chrome 或接入后端识别）';
+
+  // 发射动画
+  const vol = Math.max(peakLoudness, currentLoudness, 0.02);
+  // 把音量粗略映射到 [0.7, 2.3] 的放大系数
+  const norm = clamp(vol / 0.35, 0, 2);
+  const amp = clamp(0.7 + norm * 1.6, 0.7, 2.3);
+  shootVoiceText(textToShoot, amp);
+
+  // 清理录音中的临时气泡
+  if (liveVoiceSprite) {
+    scene.remove(liveVoiceSprite);
+    disposeSprite(liveVoiceSprite);
+    liveVoiceSprite = null;
+  }
+  liveVoiceText = '';
+}
+
+function ensureLiveVoiceSprite() {
+  if (liveVoiceSprite) return;
+  liveVoiceSprite = createTextBubbleSprite('...', {
+    fontSize: 44,
+    padding: 46,
+    maxWidth: 420,
+  });
+  liveVoiceSprite.scale.set(1.2, 1.0, 1);
+  scene.add(liveVoiceSprite);
+}
+
+function updateLiveVoiceSprite(text) {
+  if (!liveVoiceSprite) return;
+  updateTextBubbleSprite(liveVoiceSprite, text, {
+    fontSize: 44,
+    padding: 46,
+    maxWidth: 420,
+  });
+}
+
+function shootVoiceText(text, amp = 1) {
+  const start = getVoiceBallWorldPoint(3.0);
+  const target = person.localToWorld(faceTargetLocal.clone());
+  const control = start.clone().lerp(target, 0.5);
+  control.y += 1.0;
+
+  const baseFont = 56;
+  const sp = createTextBubbleSprite(text, { fontSize: baseFont * amp, padding: 52, maxWidth: 460 * amp });
+  sp.position.copy(start);
+  // 初始 scale，也叠加音量系数
+  sp.scale.setScalar(0.25 * amp);
+  scene.add(sp);
+
+  const baseDuration = 0.85;
+  const duration = baseDuration / clamp(amp, 0.7, 2.3); // 越响飞得越快
+
+  flyingTexts.push({
+    sprite: sp,
+    start,
+    control,
+    target,
+    t: 0,
+    duration,
+    amp,
+  });
+}
+
+function getVoiceBallWorldPoint(distance = 3.0) {
+  const canvasRect = canvas.getBoundingClientRect();
+  const btnRect = voiceBall.getBoundingClientRect();
+  const cx = btnRect.left + btnRect.width / 2;
+  const cy = btnRect.top + btnRect.height / 2;
+
+  const x = (cx - canvasRect.left) / canvasRect.width;
+  const y = (cy - canvasRect.top) / canvasRect.height;
+
+  const ndc = new THREE.Vector3(x * 2 - 1, -(y * 2 - 1), 0.5);
+  const p = ndc.clone().unproject(camera);
+  const dir = p.sub(camera.position).normalize();
+  return camera.position.clone().add(dir.multiplyScalar(distance));
+}
+
+function createTextBubbleSprite(text, opts) {
+  const { canvas: c, ctx, tex } = drawBubbleToTexture(text, opts);
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
+  const sp = new THREE.Sprite(mat);
+  sp.userData._bubble = { canvas: c, ctx, tex, opts, text };
+  return sp;
+}
+
+function updateTextBubbleSprite(sprite, text, opts) {
+  const d = sprite.userData._bubble;
+  if (!d) return;
+  d.opts = opts || d.opts;
+  d.text = text;
+  drawBubbleIntoExisting(d.canvas, d.ctx, d.tex, text, d.opts);
+}
+
+async function ensureVolumeMonitor(streamOverride) {
+  if (analyserNode && volumeData) return;
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+
+    audioContext = audioContext || new AudioCtx();
+    const stream = streamOverride || mediaStream || await navigator.mediaDevices.getUserMedia({ audio: true });
+    if (!stream) return;
+
+    micSourceNode = audioContext.createMediaStreamSource(stream);
+    analyserNode = audioContext.createAnalyser();
+    analyserNode.fftSize = 512;
+    micSourceNode.connect(analyserNode);
+    volumeData = new Uint8Array(analyserNode.fftSize);
+  } catch (e) {
+    // 静默失败：没有音量检测时退回默认动画强度
+  }
+}
+
+function drawBubbleToTexture(text, opts = {}) {
+  const c = document.createElement('canvas');
+  c.width = 512;
+  c.height = 512;
+  const ctx = c.getContext('2d');
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  drawBubbleIntoExisting(c, ctx, tex, text, opts);
+  return { canvas: c, ctx, tex };
+}
+
+function drawBubbleIntoExisting(c, ctx, tex, text, opts = {}) {
+  const fontSize = opts.fontSize ?? 56;
+  const padding = opts.padding ?? 56;
+  const maxWidth = opts.maxWidth ?? 420;
+
+  ctx.clearRect(0, 0, c.width, c.height);
+
+  // 气泡底
+  ctx.fillStyle = 'rgba(255,255,255,0.96)';
+  ctx.strokeStyle = '#000000';
+  ctx.lineWidth = 14;
+  const r = 56;
+  const w = maxWidth;
+  const h = 220;
+  const x = (c.width - w) / 2;
+  const y = 90;
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // 尖角
+  ctx.beginPath();
+  ctx.moveTo(c.width / 2 - 40, y + h);
+  ctx.lineTo(c.width / 2, y + h + 80);
+  ctx.lineTo(c.width / 2 + 40, y + h);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // 文字
+  ctx.fillStyle = '#000';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  let fs = fontSize;
+  const lines = wrapTextForCanvas(ctx, text, maxWidth - padding * 2, 2, fs);
+  while (fs > 28) {
+    ctx.font = `900 ${fs}px system-ui`;
+    const widest = Math.max(...lines.map(l => ctx.measureText(l).width));
+    if (widest <= (maxWidth - padding * 2)) break;
+    fs -= 4;
+  }
+  ctx.font = `900 ${fs}px system-ui`;
+  const lineGap = fs * 1.15;
+  const startY = y + h / 2 - ((lines.length - 1) * lineGap) / 2;
+  lines.forEach((l, i) => ctx.fillText(l, c.width / 2, startY + i * lineGap));
+
+  tex.needsUpdate = true;
+}
+
+function wrapTextForCanvas(ctx, text, maxW, maxLines, fontSize) {
+  const t = (text || '').trim() || '...';
+  ctx.font = `900 ${fontSize}px system-ui`;
+  if (ctx.measureText(t).width <= maxW) return [t];
+  if (maxLines <= 1) return [t];
+  // 简单二行：尽量均分字符（中文效果较好）
+  const mid = Math.ceil(t.length / 2);
+  return [t.slice(0, mid), t.slice(mid)];
+}
+
+function playRandomHitReaction() {
+  if (!mixer || !hitClips || hitClips.length === 0) return;
+
+  // 尽量不重复同一个
+  let clip = hitClips[Math.floor(Math.random() * hitClips.length)];
+  if (hitClips.length > 1 && clip?.name === lastHitClipName) {
+    clip = hitClips[(hitClips.indexOf(clip) + 1) % hitClips.length];
+  }
+  if (!clip) return;
+  lastHitClipName = clip.name;
+
+  const next = mixer.clipAction(clip);
+  next.reset();
+  next.setLoop(THREE.LoopOnce, 1);
+  next.clampWhenFinished = true;
+  next.enabled = true;
+  next.timeScale = 1;
+
+  // 停掉上一个受击动作，避免叠在一起
+  if (currentHitAction && currentHitAction !== next) {
+    currentHitAction.fadeOut(0.08);
+  }
+  currentHitAction = next;
+  next.fadeIn(0.06).play();
+}
+
+function buildHitRig(model) {
+  // 找到任意一套 skeleton（skinned mesh）
+  const skeletons = [];
+  model.traverse((obj) => {
+    if (obj && obj.isSkinnedMesh && obj.skeleton) skeletons.push(obj.skeleton);
+  });
+  const skeleton = skeletons[0];
+  if (!skeleton || !Array.isArray(skeleton.bones) || skeleton.bones.length === 0) return null;
+
+  const bones = skeleton.bones;
+  const pickByName = (re) => bones.filter(b => typeof b.name === 'string' && re.test(b.name));
+
+  const spine = pickByName(/spine|chest|upperchest|torso/i);
+  const neck = pickByName(/neck/i);
+  const head = pickByName(/head/i);
+  const clavicle = pickByName(/clavicle|collar|shoulder/i);
+  const upperArm = pickByName(/upperarm|uparm|arm\.?l|arm\.?r|arm_l|arm_r|leftarm|rightarm/i);
+  const lowerArm = pickByName(/lowerarm|forearm|loarm|elbow/i);
+  const hand = pickByName(/hand|wrist/i);
+
+  // 优先上半身骨骼；否则兜底取靠后的几根（跳过 root）
+  let candidates = [...spine, ...neck, ...head, ...clavicle, ...upperArm, ...lowerArm, ...hand];
+  if (candidates.length === 0) candidates = bones.slice(1, Math.min(6, bones.length));
+
+  // 去重
+  candidates = Array.from(new Set(candidates));
+
+  // 记录初始姿态
+  const base = new Map();
+  const state = new Map();
+  candidates.forEach((b) => {
+    base.set(b.uuid, b.quaternion.clone());
+    state.set(b.uuid, {
+      // 角速度（欧拉近似）
+      v: new THREE.Vector3(0, 0, 0),
+      // 当前偏移（欧拉近似）
+      o: new THREE.Vector3(0, 0, 0),
+      // 每根骨骼的轴向权重：避免手往下甩穿模
+      axisW: (() => {
+        const name = (b.name || '').toLowerCase();
+        const isArm = /clavicle|collar|shoulder|arm|forearm|hand|wrist|elbow/.test(name);
+        // x: 前后俯仰（最容易让手往下穿模）→ 手臂上显著降低
+        // y/z: 左右摆动/扭转 → 保持/略增强
+        return isArm
+          ? new THREE.Vector3(0.25, 1.15, 1.1)
+          : new THREE.Vector3(1.0, 1.0, 1.0);
+      })(),
+    });
+  });
+
+  return { skeleton, candidates, base, state, ttl: 0 };
+}
+
+function triggerProceduralHit() {
+  if (!hitRig || !hitRig.candidates || hitRig.candidates.length === 0) return;
+  // 受击持续时间
+  hitRig.ttl = 0.45;
+
+  // 给每根候选骨骼一个随机冲击（上半身更明显）
+  const n = hitRig.candidates.length;
+  hitRig.candidates.forEach((b, i) => {
+    const st = hitRig.state.get(b.uuid);
+    if (!st) return;
+    // 让手臂/手更容易被带动（通常骨骼名字里含 arm/hand）
+    const name = (b.name || '').toLowerCase();
+    const armBoost = /clavicle|collar|shoulder|arm|forearm|hand|wrist|elbow/.test(name) ? 1.25 : 1.0;
+    const w = (1 - i / Math.max(n, 1)) * armBoost;
+
+    const isArm = /clavicle|collar|shoulder|arm|forearm|hand|wrist|elbow/.test(name);
+    if (isArm) {
+      // 手臂/手：尽量左右/扭转，不要往下甩（减少 x）
+      const kickX = (0.10 + Math.random() * 0.12) * w;           // 很小的前后
+      const kickY = (0.45 + Math.random() * 0.45) * (Math.random() < 0.5 ? -1 : 1) * w; // 左右摆
+      const kickZ = (0.35 + Math.random() * 0.55) * (Math.random() < 0.5 ? -1 : 1) * w; // 扭转
+      // x 方向偏后仰但幅度小
+      const dir = (Math.random() < 0.8) ? 1 : -1;
+      st.v.x += kickX * dir * 7.0 * st.axisW.x;
+      st.v.y += kickY * 7.5 * st.axisW.y;
+      st.v.z += kickZ * 7.5 * st.axisW.z;
+    } else {
+      // 躯干/头：仍以 x 为主
+      const kickX = (0.55 + Math.random() * 0.45) * w;
+      const kickY = (Math.random() - 0.5) * 0.45 * w;
+      const kickZ = (Math.random() - 0.5) * 0.55 * w;
+      const dir = (Math.random() < 0.8) ? 1 : -1;
+      st.v.x += kickX * dir * 7.5;
+      st.v.y += kickY * 7.5;
+      st.v.z += kickZ * 7.5;
+    }
+  });
+}
+
+function updateProceduralHit(dt) {
+  if (!hitRig) return;
+
+  // 弹簧参数：大一点的回弹 + 阻尼
+  const k = 38;     // 回弹强度
+  const damp = 9.5; // 阻尼
+
+  // 即使 ttl 结束，也继续让它回到 0 偏移
+  hitRig.ttl = Math.max(hitRig.ttl - dt, 0);
+
+  hitRig.candidates.forEach((b, i) => {
+    const baseQ = hitRig.base.get(b.uuid);
+    const st = hitRig.state.get(b.uuid);
+    if (!baseQ || !st) return;
+
+    // 越靠上（head/neck）越容易“摆动”一点
+    const w = 0.75 + (1 - i / Math.max(hitRig.candidates.length, 1)) * 0.35;
+
+    // 简单弹簧：o'' = -k*o - damp*o'
+    st.v.x += (-k * st.o.x - damp * st.v.x) * dt * w * st.axisW.x;
+    st.v.y += (-k * st.o.y - damp * st.v.y) * dt * w * st.axisW.y;
+    st.v.z += (-k * st.o.z - damp * st.v.z) * dt * w * st.axisW.z;
+
+    st.o.addScaledVector(st.v, dt);
+
+    // 当没有受击且足够接近 0，就钳制到 0，避免抖动残留
+    if (hitRig.ttl === 0 && st.o.lengthSq() < 1e-5 && st.v.lengthSq() < 1e-4) {
+      st.o.set(0, 0, 0);
+      st.v.set(0, 0, 0);
+      b.quaternion.copy(baseQ);
+      return;
+    }
+
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(st.o.x, st.o.y, st.o.z, 'XYZ'));
+    b.quaternion.copy(baseQ).multiply(q);
+  });
+}
+
+function spawnHitReplyBubble() {
+  if (!person || !modelRoot || hitReplyTexts.length === 0) return;
+  const text = hitReplyTexts[Math.floor(Math.random() * hitReplyTexts.length)];
+
+  // 在脸附近随机一点位置
+  const local = faceTargetLocal.clone().add(
+    new THREE.Vector3(
+      (Math.random() - 0.5) * 0.8,
+      0.35 + Math.random() * 0.4,
+      -0.2 + Math.random() * 0.2
+    )
+  );
+  const world = person.localToWorld(local);
+
+  const sp = createTextBubbleSprite(text, {
+    fontSize: 40,
+    padding: 40,
+    maxWidth: 360,
+  });
+  sp.position.copy(world);
+  sp.scale.set(1.8, 1.4, 1);
+  sp.material.opacity = 0.0;
+  scene.add(sp);
+
+  hitReplyBubbles.push({
+    sprite: sp,
+    life: 1.4,
+    maxLife: 1.4,
+  });
+}
+
+function disposeSprite(sprite) {
+  if (!sprite) return;
+  const mat = sprite.material;
+  if (mat?.map) mat.map.dispose();
+  mat?.dispose?.();
+}
+function createOrUpdateSignMesh(model) {
+  // 以模型尺寸为基准，估算木板大小/位置
+  const box = new THREE.Box3().setFromObject(model);
+  const size = box.getSize(new THREE.Vector3());
+
+  const boardW = Math.max(0.6, Math.min(1.2, size.x * 0.55));
+  const boardH = Math.max(0.25, Math.min(0.6, size.y * 0.18));
+
+  if (!signCanvas) {
+    signCanvas = document.createElement('canvas');
+    signCanvas.width = 1024;
+    signCanvas.height = 512;
+    signCtx = signCanvas.getContext('2d');
+    signTex = new THREE.CanvasTexture(signCanvas);
+    signTex.colorSpace = THREE.SRGBColorSpace;
+    signTex.anisotropy = renderer.capabilities.getMaxAnisotropy?.() || 1;
+  }
+
+  if (signMesh) {
+    person.remove(signMesh);
+    signMesh.geometry.dispose();
+  }
+
+  const woodMat = new THREE.MeshStandardMaterial({
+    map: signTex,
+    roughness: 0.9,
+    metalness: 0.0,
+  });
+
+  signMesh = new THREE.Mesh(new THREE.PlaneGeometry(boardW, boardH), woodMat);
+  // “胸前”位置：居中偏上，向前一点
+  signMesh.position.set(0, Math.max(2, size.y * 0.58), Math.max(0.25, size.z * 0.35));
+  signMesh.rotation.y = 0; // 默认朝向相机；如果模型面向反了，再调成 Math.PI
+  signMesh.renderOrder = 2;
+
+  person.add(signMesh);
+}
+
+function renderSignText(text) {
+  if (!signCtx || !signTex) return;
+
+  const w = signCanvas.width;
+  const h = signCanvas.height;
+
+  // 背景木纹（简易）
+  signCtx.clearRect(0, 0, w, h);
+  signCtx.fillStyle = '#b07a45';
+  signCtx.fillRect(0, 0, w, h);
+  for (let i = 0; i < 18; i++) {
+    const y = (i / 18) * h;
+    signCtx.fillStyle = `rgba(80, 45, 20, ${0.06 + (i % 3) * 0.02})`;
+    signCtx.fillRect(0, y, w, 8);
+  }
+  // 边框
+  signCtx.lineWidth = 26;
+  signCtx.strokeStyle = 'rgba(60,30,10,0.65)';
+  signCtx.strokeRect(18, 18, w - 36, h - 36);
+
+  // 文字（自动缩放到合适大小，支持换行到最多2行）
+  const paddingX = 80;
+  const maxW = w - paddingX * 2;
+  const lines = splitTextToLines(text, 2);
+
+  let fontSize = 140;
+  while (fontSize > 48) {
+    signCtx.font = `900 ${fontSize}px system-ui`;
+    const widest = Math.max(...lines.map(l => signCtx.measureText(l).width));
+    if (widest <= maxW) break;
+    fontSize -= 6;
+  }
+
+  signCtx.font = `900 ${fontSize}px system-ui`;
+  signCtx.textAlign = 'center';
+  signCtx.textBaseline = 'middle';
+  signCtx.fillStyle = '#1b0f05';
+  signCtx.shadowColor = 'rgba(0,0,0,0.25)';
+  signCtx.shadowBlur = 8;
+  signCtx.shadowOffsetY = 4;
+
+  const lineGap = fontSize * 1.15;
+  const startY = h / 2 - ((lines.length - 1) * lineGap) / 2;
+  lines.forEach((l, i) => {
+    signCtx.fillText(l, w / 2, startY + i * lineGap);
+  });
+
+  signTex.needsUpdate = true;
+}
+
+function splitTextToLines(text, maxLines) {
+  const t = (text || '').trim();
+  if (!t) return ['...'];
+  // 简单策略：如果太长，切成两行（尽量均分）
+  if (t.length <= 10 || maxLines <= 1) return [t];
+  const mid = Math.ceil(t.length / 2);
+  return [t.slice(0, mid), t.slice(mid, t.length)];
+}
+
+/* ================= 鸡蛋（3D 抛物线） ================= */
+const eggs = [];
+
+function createEgg() {
+  const egg = new THREE.Mesh(
+    new THREE.SphereGeometry(0.12, 16, 16),
+    new THREE.MeshStandardMaterial({ color: 0xfff5cc, roughness: 0.6 })
+  );
+  egg.position.set((Math.random() - 0.5) * 1.2, 0.6, 3);
+
+  egg.userData = {
+    t: 0,
+    start: egg.position.clone(),
+    end: new THREE.Vector3(0, 2, 0)
+  };
+
+  scene.add(egg);
+  eggs.push(egg);
+}
+
+document.getElementById('eggBtn').onclick = createEgg;
+
+/* ================= 马桶 + 漩涡 ================= */
+const toilet = new THREE.Group();
+toilet.position.set(0, 0, -0.8);
+scene.add(toilet);
+
+/* 底座 */
+const base = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.6, 0.8, 0.4, 24),
+  new THREE.MeshStandardMaterial({ color: 0xffffff })
+);
+base.position.y = 0.2;
+toilet.add(base);
+
+/* 座圈 */
+const seat = new THREE.Mesh(
+  new THREE.TorusGeometry(0.45, 0.08, 16, 32),
+  new THREE.MeshStandardMaterial({ color: 0xeeeeee })
+);
+seat.rotation.x = Math.PI / 2;
+seat.position.y = 0.45;
+toilet.add(seat);
+
+/* 漩涡水面 */
+const swirlCanvas = document.createElement('canvas');
+swirlCanvas.width = swirlCanvas.height = 256;
+const swirlCtx = swirlCanvas.getContext('2d');
+const swirlTex = new THREE.CanvasTexture(swirlCanvas);
+
+const water = new THREE.Mesh(
+  new THREE.CircleGeometry(0.35, 32),
+  new THREE.MeshStandardMaterial({ map: swirlTex, transparent: true })
+);
+water.rotation.x = -Math.PI / 2;
+water.position.y = 0.46;
+toilet.add(water);
+
+// 漫画对话气泡
+const bubbles = [];
+function createBubble(text, pos){
+  const size = 512;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.strokeStyle = '#000000';
+  ctx.lineWidth = 14;
+  // 圆角矩形
+  const r = 56; const w = 420; const h = 240; const x = 46; const y = 60;
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  // 尖角
+  ctx.beginPath();
+  ctx.moveTo(180, y+h);
+  ctx.lineTo(220, y+h+80);
+  ctx.lineTo(260, y+h);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  // 文字
+  ctx.fillStyle = '#000';
+  ctx.font = 'bold 56px system-ui';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const lines = text.split('\n');
+  lines.forEach((l,i)=>ctx.fillText(l, size/2, y+80+i*64));
+  const tex = new THREE.CanvasTexture(c);
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
+  const sp = new THREE.Sprite(mat);
+  sp.position.copy(pos);
+  sp.scale.set(3.2, 2.8, 1);
+  scene.add(sp);
+  bubbles.push(sp);
+}
+createBubble('压力山大!\n受够了!', new THREE.Vector3(1.6, 2.2, 0));
+createBubble('我要发泄!', new THREE.Vector3(-1.6, 2.0, 0.2));
+
+function updateSwirl(time) {
+  swirlCtx.clearRect(0,0,256,256);
+  swirlCtx.translate(128,128);
+  swirlCtx.rotate(time * 0.002);
+
+  const g = swirlCtx.createRadialGradient(0,0,10,0,0,120);
+  g.addColorStop(0,'rgba(255,255,255,0.8)');
+  g.addColorStop(1,'rgba(100,100,255,0.1)');
+  swirlCtx.fillStyle = g;
+  swirlCtx.beginPath();
+  swirlCtx.arc(0,0,120,0,Math.PI*2);
+  swirlCtx.fill();
+
+  swirlCtx.setTransform(1,0,0,1,0,0);
+  swirlTex.needsUpdate = true;
+}
+
+/* ================= 冲走 ================= */
+/* ================= 冲走（修复 & 强化） ================= */
+const flushBtn = document.getElementById('flushBtn');
+let isFlushing = false;
+
+flushBtn.onclick = () => {
+  if (isFlushing) return;
+  isFlushing = true;
+  flushBtn.disabled = true;
+
+  const startPos = person.position.clone();
+  const startScale = person.scale.clone();
+  const startRot = person.rotation.clone();
+
+  const targetPos = new THREE.Vector3(0, 0.35, -0.8);
+  const duration = 1200;
+  const startTime = performance.now();
+
+  function animateFlush(now) {
+    const elapsed = now - startTime;
+    const t = Math.min(elapsed / duration, 1);
+
+    // 缓动（强吸入）
+    const ease = t * t;
+
+    // 人物移动
+    person.position.lerpVectors(startPos, targetPos, ease);
+
+    // 缩小
+    const s = Math.max(1 - ease * 1.2, 0.02);
+    person.scale.setScalar(s);
+
+    // 疯狂旋转
+    person.rotation.y += 0.5;
+    person.rotation.z += 0.25;
+
+    // 🚿 冲水强化：旋涡加速 + 放大
+    water.scale.setScalar(1 + ease * 0.6);
+    water.rotation.z -= 0.4;
+
+    if (t < 1) {
+      requestAnimationFrame(animateFlush);
+    } else {
+      // 完全吸走后停留
+      setTimeout(() => {
+        resetAfterFlush();
+      }, 500);
+    }
+  }
+
+  requestAnimationFrame(animateFlush);
+};
+
+function resetAfterFlush() {
+  // 重置人物
+  person.position.set(0, 0, 0);
+  person.scale.set(1, 1, 1);
+  person.rotation.set(0, 0, 0);
+
+  // 重置水面
+  water.scale.set(1, 1, 1);
+  water.rotation.set(-Math.PI / 2, 0, 0);
+
+  flushBtn.disabled = false;
+  isFlushing = false;
+}
+
+
+/* ================= 工具函数 ================= */
+function createClothTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const ctx = c.getContext('2d');
+  // 上半红色T恤
+  const grdTop = ctx.createLinearGradient(0,0,0,140);
+  grdTop.addColorStop(0,'#ff5a4f');
+  grdTop.addColorStop(1,'#d63b2f');
+  ctx.fillStyle = grdTop;
+  ctx.fillRect(0,0,256,140);
+  // 下半蓝色长裤
+  const grdBottom = ctx.createLinearGradient(0,140,0,256);
+  grdBottom.addColorStop(0,'#2f5fb3');
+  grdBottom.addColorStop(1,'#254c8e');
+  ctx.fillStyle = grdBottom;
+  ctx.fillRect(0,140,256,116);
+  // 腰线
+  ctx.fillStyle = '#222';
+  ctx.fillRect(0,138,256,4);
+  // 裤子中缝
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(128,150);
+  ctx.lineTo(128,250);
+  ctx.stroke();
+  return new THREE.CanvasTexture(c);
+}
+
+/* ================= 动画循环 ================= */
+let shake = 0;
+const clock = new THREE.Clock();
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = clock.getDelta();
+  const now = performance.now();
+
+  updateSwirl(now);
+
+  if (mixer) mixer.update(dt);
+  else updateProceduralHit(dt);
+
+  // 更新鸡蛋
+  for (let i = eggs.length - 1; i >= 0; i--) {
+    const egg = eggs[i];
+    egg.userData.t += dt * 1.2;
+    const t = egg.userData.t;
+    egg.position.lerpVectors(egg.userData.start, egg.userData.end, t);
+    egg.position.y += Math.sin(Math.PI * t) * 1.5;
+    egg.rotation.x += 0.2;
+    egg.rotation.z += 0.2;
+    if (t >= 1) {
+      scene.remove(egg);
+      eggs.splice(i, 1);
+      shake = 0.3;
+      if (mixer && hitClips.length) playRandomHitReaction();
+      else triggerProceduralHit();
+      spawnHitReplyBubble();
+    }
+  }
+
+  // 抖动
+  if (shake > 0) {
+    shake -= dt;
+    person.rotation.y = Math.sin(Date.now() * 0.03) * 0.25;
+  } else {
+    person.rotation.y *= 0.9;
+  }
+
+  // 对话气泡轻微上下浮动
+  const t = now * 0.001;
+  bubbles.forEach((sp,i)=>{
+    sp.position.y += Math.sin(t*2 + i) * 0.003;
+  });
+
+  updateVoiceEffects(dt);
+
+  renderer.render(scene, camera);
+}
+
+animate();
+
+function updateVoiceEffects(dt) {
+  // 录音时，实时更新音量（RMS）
+  if (isVoiceRecording && analyserNode && volumeData) {
+    analyserNode.getByteTimeDomainData(volumeData);
+    let sum = 0;
+    for (let i = 0; i < volumeData.length; i++) {
+      const v = (volumeData[i] - 128) / 128; // [-1,1]
+      sum += v * v;
+    }
+    const rms = Math.sqrt(sum / volumeData.length); // 0~1 左右
+    // 平滑一点，避免抖动
+    currentLoudness = currentLoudness * 0.85 + rms * 0.15;
+    peakLoudness = Math.max(peakLoudness, currentLoudness);
+  }
+
+  // 录音中的临时气泡跟随按钮位置
+  if (isVoiceRecording && liveVoiceSprite && voiceBall) {
+    liveVoiceSprite.position.copy(getVoiceBallWorldPoint(3.0));
+  }
+
+  // 飞行气泡：从语音球飞向脸部（曲线 + 缩放）
+  for (let i = flyingTexts.length - 1; i >= 0; i--) {
+    const f = flyingTexts[i];
+    f.t += dt / Math.max(f.duration, 0.0001);
+    const tt = Math.min(f.t, 1);
+
+    const p = quadBezier(f.start, f.control, f.target, tt);
+    f.sprite.position.copy(p);
+
+    const s = lerp(0.25, 1.25, easeOutCubic(tt));
+    f.sprite.scale.setScalar(s);
+
+    if (tt >= 1) {
+      // 砸脸：抖动 + 碎裂/淡出
+      shake = Math.max(shake, 0.3);
+      if (mixer && hitClips.length) playRandomHitReaction();
+      else triggerProceduralHit();
+      explodeText(f.sprite, f.target);
+      flyingTexts.splice(i, 1);
+      spawnHitReplyBubble();
+    }
+  }
+
+  // 碎裂碎片：飞散 + 淡出
+  for (let i = shards.length - 1; i >= 0; i--) {
+    const sh = shards[i];
+    sh.life -= dt;
+    sh.sprite.position.addScaledVector(sh.vel, dt);
+    sh.vel.multiplyScalar(0.92);
+    sh.sprite.material.opacity = Math.max(sh.life / sh.maxLife, 0);
+    sh.sprite.scale.multiplyScalar(0.98);
+    if (sh.life <= 0) {
+      scene.remove(sh.sprite);
+      disposeSprite(sh.sprite);
+      shards.splice(i, 1);
+    }
+  }
+
+  // 受击回复气泡：升起 + 淡入/淡出
+  for (let i = hitReplyBubbles.length - 1; i >= 0; i--) {
+    const item = hitReplyBubbles[i];
+    item.life -= dt;
+    const t = clamp(1 - item.life / item.maxLife, 0, 1);
+    const fadeIn = Math.min(t * 3, 1);
+    const fadeOut = clamp(item.life / (item.maxLife * 0.6), 0, 1);
+    const alpha = clamp(fadeIn * fadeOut, 0, 1);
+
+    item.sprite.position.y += dt * 0.35;
+    item.sprite.material.opacity = alpha;
+
+    if (item.life <= 0) {
+      scene.remove(item.sprite);
+      disposeSprite(item.sprite);
+      hitReplyBubbles.splice(i, 1);
+    }
+  }
+}
+
+function explodeText(mainSprite, atWorld) {
+  // 主气泡淡出并移除
+  scene.remove(mainSprite);
+  disposeSprite(mainSprite);
+
+  // 用字符碎片做“碎裂”感
+  const text = (mainSprite.userData?._bubble?.text || '').trim() || '喷!';
+  const chars = Array.from(text).slice(0, 10);
+
+  chars.forEach((ch, idx) => {
+    const sp = createTextBubbleSprite(ch, { fontSize: 72, padding: 80, maxWidth: 260 });
+    sp.position.copy(atWorld);
+    sp.scale.setScalar(0.18);
+    sp.material.opacity = 0.95;
+    scene.add(sp);
+
+    const angle = (idx / Math.max(chars.length, 1)) * Math.PI * 2;
+    const vel = new THREE.Vector3(Math.cos(angle), 0.6 + Math.random() * 0.6, Math.sin(angle))
+      .multiplyScalar(1.2 + Math.random() * 0.8);
+    vel.x += (Math.random() - 0.5) * 0.4;
+    vel.z += (Math.random() - 0.5) * 0.4;
+
+    shards.push({
+      sprite: sp,
+      vel,
+      life: 0.45,
+      maxLife: 0.45,
+    });
+  });
+}
+
+function quadBezier(p0, p1, p2, t) {
+  const a = p0.clone().lerp(p1, t);
+  const b = p1.clone().lerp(p2, t);
+  return a.lerp(b, t);
+}
+
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function easeOutCubic(t) {
+  return 1 - Math.pow(1 - t, 3);
+}
+
+function clamp(v, min, max) {
+  return v < min ? min : (v > max ? max : v);
+}

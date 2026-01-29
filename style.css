@@ -1,0 +1,454 @@
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont;
+  background: #f3f3f3;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 顶部 */
+.top {
+  height: 56px;
+  padding: 0 16px;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #eee;
+}
+
+.top h1 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.top button {
+  min-width: 44px;
+  height: 36px;
+}
+
+/* 舞台 */
+.stage {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+/* 人物（3D 风格） */
+.person {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -45%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  perspective: 800px;
+}
+
+.head {
+  width: 160px;
+  height: 160px;
+  background: linear-gradient(145deg, #ddd, #bbb);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: rotateX(10deg);
+}
+
+.face {
+  width: 110px;
+  height: 110px;
+  border-radius: 50%;
+  background: #eee;
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.face img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.placeholder {
+  font-size: 12px;
+  color: #888;
+  text-align: center;
+  line-height: 110px;
+}
+
+.clear-face {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: none;
+}
+
+.body {
+  width: 120px;
+  height: 160px;
+  background: linear-gradient(#ccc, #aaa);
+  border-radius: 60px;
+  margin-top: -20px;
+}
+
+/* 语音球 */
+.voice-ball {
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  font-size: 24px;
+}
+
+/* 更换头像按钮（放在语音球下方） */
+.avatar-btn {
+  position: absolute;
+  right: 16px;
+  top: calc(50% + 80px);
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  font-size: 22px;
+}
+
+.voice-ball.recording {
+  animation: breathe 1.2s infinite;
+}
+
+@keyframes breathe {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
+
+/* 底部工具栏 */
+.toolbar {
+  height: 72px;
+  padding: 8px 16px env(safe-area-inset-bottom);
+  background: #fff;
+  display: flex;
+  justify-content: space-between;
+  border-top: 1px solid #eee;
+}
+
+.tool, .flush {
+  min-width: 120px;
+  height: 44px;
+}
+
+/* 弹幕文字 */
+.barrage {
+  position: absolute;
+  font-weight: bold;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* 污渍 */
+.stains {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.stain {
+  position: absolute;
+  background: rgba(80, 60, 0, 0.4);
+  border-radius: 50%;
+}
+
+/* 漩涡 */
+.swirl {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle, transparent 40%, rgba(0,0,0,0.4));
+  animation: spin 1.2s linear;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Toast */
+.toast {
+  position: fixed;
+  bottom: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0,0,0,0.75);
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 16px;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+/* Modal */
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  display: none;
+}
+
+.modal-content {
+  background: #fff;
+  margin: 80px 16px;
+  padding: 16px;
+  border-radius: 12px;
+}
+
+.warn {
+  color: #d00;
+  font-size: 12px;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  font-family: system-ui;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  background: radial-gradient(
+    circle at top,
+    #8b0000,
+    #5a0000 60%,
+    #2b0000
+  );
+}
+
+/* 顶部 */
+.top {
+  height: 56px;
+  padding: 0 16px;
+  background: rgba(0,0,0,0.4);
+  color: #fff;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* 舞台区域 */
+.stage {
+  flex: 1;
+  position: relative;
+}
+
+canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* 语音球 */
+.voice-ball {
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  font-size: 24px;
+}
+
+.voice-ball.recording {
+  animation: breathe 1.2s infinite;
+}
+
+@keyframes breathe {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
+
+/* 底部 */
+.toolbar {
+  height: 72px;
+  padding: 8px 16px env(safe-area-inset-bottom);
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  justify-content: space-between;
+}
+
+.toolbar button {
+  min-width: 120px;
+  height: 44px;
+}
+
+/* Toast */
+.toast {
+  position: fixed;
+  bottom: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0,0,0,0.75);
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 16px;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  font-family: system-ui;
+}
+
+/* 红色舞台幕布背景 */
+body {
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(circle at 50% 70%, rgba(255,255,255,0.55) 0 36%, rgba(255,255,255,0) 62%),
+    repeating-conic-gradient(
+      from -12deg,
+      #ffd166 0 12deg,
+      #ef476f 12deg 24deg,
+      #8338ec 24deg 36deg,
+      #06d6a0 36deg 48deg,
+      #118ab2 48deg 60deg
+    ),
+    radial-gradient(circle at bottom, #fff7e6, #ffe0cc 55%, #ffd1d1);
+}
+
+.top {
+  height: 56px;
+  padding: 0 16px;
+  color: #fff;
+  background: rgba(0,0,0,0.4);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+/* 语音预览小气泡 */
+.voice-preview {
+  position: absolute;
+  background: rgba(255,255,255,0.9);
+  color: #000;
+  padding: 6px 10px;
+  border-radius: 16px;
+  font-size: 14px;
+  pointer-events: none;
+}
+.stage {
+  flex: 1;
+  position: relative;
+}
+
+canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* 语音球（右侧中间） */
+.voice-ball {
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  font-size: 26px;
+  border: none;
+}
+
+/* 扔鸡蛋按钮：左侧偏下，避免与底部工具栏重叠 */
+.egg-btn {
+  position: absolute;
+  left: 16px;
+  bottom: 96px;
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  font-size: 26px;
+  border: none;
+}
+
+/* 底部工具栏（以移动端为主） */
+.toolbar {
+  padding: 8px 12px env(safe-area-inset-bottom);
+  background: rgba(0,0,0,0.55);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.toolbar button {
+  min-width: 90px;
+  height: 40px;
+  font-size: 15px;
+}
+
+/* 胸前木板文字输入 */
+.sign-input {
+  flex: 1;
+  min-width: 120px;
+  height: 40px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.25);
+  background: rgba(255,255,255,0.92);
+  font-size: 14px;
+  outline: none;
+}
+
+.sign-input::placeholder {
+  color: rgba(0,0,0,0.45);
+}
+
+/* 小屏（手机）优先适配：底部内容竖排，保证不被遮挡 */
+@media (max-width: 480px) {
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+  }
+
+  .toolbar button,
+  .sign-input {
+    width: 100%;
+    max-width: none;
+  }
+
+  .egg-btn {
+    bottom: 104px; /* 稍微再高一点，避开更高的底部栏 */
+  }
+}

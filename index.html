@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>喷它！ · 3D舞台版</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<header class="top">
+  <h1>喷它！</h1>
+  <span>把压力冲走</span>
+</header>
+
+<main class="stage">
+  <canvas id="three"></canvas>
+  <button id="voiceBall" class="voice-ball">🎤</button>
+  <button id="eggBtn" class="egg-btn">🥚</button>
+</main>
+
+<footer class="toolbar">
+  <input id="signText" class="sign-input" type="text" maxlength="20" placeholder="输入要写在木板上的字…" />
+  <button id="signBtn">写到木板</button>
+  <button id="flushBtn">🚽 冲走他</button>
+</footer>
+
+<!-- Three.js (ESM) -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.158.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.158.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module" src="main.js"></script>
+</body>
+</html>
