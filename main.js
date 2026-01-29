@@ -70,13 +70,18 @@ scene.add(stage);
 const person = new THREE.Group();
 scene.add(person);
 
-// 骨骼动画：受击随机动作
+// 骨骼动画：受击随机动作 + 跳舞循环
 let modelRoot = null;
 let mixer = null;
 let hitClips = [];
+let danceClips = [];
 let currentHitAction = null;
+let currentDanceAction = null;
 let lastHitClipName = '';
 let hitRig = null; // 无动画时的“程序受击骨骼”
+let danceRig = null; // 程序化跳舞骨骼系统
+let danceTime = 0; // 跳舞时间计数器
+let isDancing = true; // 是否正在跳舞
 
 // 胸前木板（文字牌）
 let signMesh = null;
@@ -175,9 +180,14 @@ function loadPersonModel() {
       mixer = null;
       modelRoot = null;
       hitClips = [];
+      danceClips = [];
       currentHitAction = null;
+      currentDanceAction = null;
       lastHitClipName = '';
       hitRig = null;
+      danceRig = null;
+      isDancing = true;
+      danceTime = 0;
 
       const model = gltf.scene || gltf.scenes?.[0];
       if (!model) return;
@@ -195,14 +205,34 @@ function loadPersonModel() {
       // 初始化骨骼动画（如果 glb 内带动画）
       if (Array.isArray(gltf.animations) && gltf.animations.length > 0) {
         mixer = new THREE.AnimationMixer(model);
-        // 优先挑“受击/受伤”相关片段；找不到就用非 idle 片段；再不行就用全部
         const clips = gltf.animations.slice();
+        
+        // 分离跳舞动画和受击动画
         const byHit = clips.filter(c => /hit|hurt|impact|damage|react|stun|knock/i.test(c.name));
-        const nonIdle = clips.filter(c => !/idle|stand|breath|loop/i.test(c.name));
+        const byDance = clips.filter(c => /dance|dancing|idle|stand|breath|loop|walk|run/i.test(c.name));
+        
+        // 受击动画：优先 hit 类，否则用非 idle 类
+        const nonIdle = clips.filter(c => !/idle|stand|breath|loop|dance|walk|run/i.test(c.name));
         hitClips = (byHit.length ? byHit : (nonIdle.length ? nonIdle : clips));
+        
+        // 跳舞动画：优先 dance，否则用 idle/stand/loop
+        danceClips = byDance.length > 0 ? byDance : clips.filter(c => /idle|stand|breath|loop/i.test(c.name));
+        
+        // 如果没有明确的跳舞动画，就用第一个动画作为默认
+        if (danceClips.length === 0 && clips.length > 0) {
+          danceClips = [clips[0]];
+        }
+        
+        // 开始播放跳舞动画（循环）
+        if (danceClips.length > 0) {
+          startDanceAnimation();
+        }
       }
-      // 没有动画也没关系：初始化“程序受击骨骼”
+      // 没有动画也没关系：初始化“程序受击骨骼”和“程序跳舞骨骼”
       hitRig = buildHitRig(model);
+      danceRig = buildDanceRig(model);
+      isDancing = true;
+      danceTime = 0;
 
       // 自动居中并落地（把模型底部放到 y=0）
       const box = new THREE.Box3().setFromObject(model);
@@ -617,8 +647,32 @@ function wrapTextForCanvas(ctx, text, maxW, maxLines, fontSize) {
   return [t.slice(0, mid), t.slice(mid)];
 }
 
+function startDanceAnimation() {
+  if (!mixer || !danceClips || danceClips.length === 0) return;
+  
+  // 随机选一个跳舞动画（如果有多个）
+  const danceClip = danceClips[Math.floor(Math.random() * danceClips.length)];
+  if (!danceClip) return;
+  
+  const danceAction = mixer.clipAction(danceClip);
+  danceAction.reset();
+  danceAction.setLoop(THREE.LoopRepeat, Infinity);  // 无限循环
+  danceAction.enabled = true;
+  danceAction.timeScale = 1;
+  danceAction.fadeIn(0.3).play();
+  
+  currentDanceAction = danceAction;
+}
+
 function playRandomHitReaction() {
   if (!mixer || !hitClips || hitClips.length === 0) return;
+
+  // 暂停跳舞动画（如果有）
+  if (currentDanceAction) {
+    currentDanceAction.fadeOut(0.1);
+  }
+  // 暂停程序化跳舞
+  isDancing = false;
 
   // 尽量不重复同一个
   let clip = hitClips[Math.floor(Math.random() * hitClips.length)];
@@ -696,8 +750,103 @@ function buildHitRig(model) {
   return { skeleton, candidates, base, state, ttl: 0 };
 }
 
+function buildDanceRig(model) {
+  // 复用 buildHitRig 的逻辑找到骨骼
+  const skeletons = [];
+  model.traverse((obj) => {
+    if (obj && obj.isSkinnedMesh && obj.skeleton) skeletons.push(obj.skeleton);
+  });
+  const skeleton = skeletons[0];
+  if (!skeleton || !Array.isArray(skeleton.bones) || skeleton.bones.length === 0) return null;
+
+  const bones = skeleton.bones;
+  const pickByName = (re) => bones.filter(b => typeof b.name === 'string' && re.test(b.name));
+
+  const spine = pickByName(/spine|chest|upperchest|torso/i);
+  const neck = pickByName(/neck/i);
+  const head = pickByName(/head/i);
+  const clavicle = pickByName(/clavicle|collar|shoulder/i);
+  const upperArm = pickByName(/upperarm|uparm|arm\.?l|arm\.?r|arm_l|arm_r|leftarm|rightarm/i);
+  const lowerArm = pickByName(/lowerarm|forearm|loarm|elbow/i);
+  const hand = pickByName(/hand|wrist/i);
+
+  let candidates = [...spine, ...neck, ...head, ...clavicle, ...upperArm, ...lowerArm, ...hand];
+  if (candidates.length === 0) candidates = bones.slice(1, Math.min(8, bones.length));
+  candidates = Array.from(new Set(candidates));
+
+  // 记录初始姿态和跳舞参数
+  const base = new Map();
+  const danceParams = new Map();
+  candidates.forEach((b, idx) => {
+    base.set(b.uuid, b.quaternion.clone());
+    const name = (b.name || '').toLowerCase();
+    const isArm = /clavicle|collar|shoulder|arm|forearm|hand|wrist|elbow/.test(name);
+    const isHead = /head/i.test(name);
+    const isSpine = /spine|chest|upperchest|torso/i.test(name);
+    
+    danceParams.set(b.uuid, {
+      isArm,
+      isHead,
+      isSpine,
+      phase: (idx / Math.max(candidates.length, 1)) * Math.PI * 2, // 相位偏移，让不同骨骼不同步
+      amplitude: isArm ? 0.25 : (isHead ? 0.15 : (isSpine ? 0.2 : 0.12)), // 摆动幅度
+      speed: isArm ? 1.8 : (isHead ? 1.2 : 1.5), // 摆动速度
+    });
+  });
+
+  return { skeleton, candidates, base, danceParams };
+}
+
+function updateProceduralDance(dt) {
+  if (!danceRig || !isDancing) return;
+  
+  danceTime += dt;
+  
+  danceRig.candidates.forEach((b) => {
+    const baseQ = danceRig.base.get(b.uuid);
+    const params = danceRig.danceParams.get(b.uuid);
+    if (!baseQ || !params) return;
+
+    const t = danceTime * params.speed + params.phase;
+    let offsetX = 0, offsetY = 0, offsetZ = 0;
+
+    if (params.isSpine) {
+      // 身体：左右摇摆 + 轻微前后
+      offsetY = Math.sin(t) * params.amplitude * 0.8;
+      offsetX = Math.sin(t * 0.7) * params.amplitude * 0.3;
+      offsetZ = Math.cos(t * 0.5) * params.amplitude * 0.2;
+    } else if (params.isHead) {
+      // 头部：跟随身体，但幅度更小
+      offsetY = Math.sin(t * 0.9) * params.amplitude * 0.6;
+      offsetX = Math.sin(t * 0.6) * params.amplitude * 0.2;
+    } else if (params.isArm) {
+      // 手臂：上下摆动 + 左右展开
+      const armPhase = params.phase;
+      const isLeft = /left|l\.|_l/i.test(b.name);
+      const side = isLeft ? -1 : 1;
+      
+      // 上下摆动（主要动作）
+      offsetX = Math.sin(t + armPhase) * params.amplitude * 1.2;
+      // 左右展开/收回
+      offsetY = Math.cos(t * 0.8 + armPhase) * params.amplitude * side * 0.6;
+      // 轻微扭转
+      offsetZ = Math.sin(t * 1.1 + armPhase) * params.amplitude * 0.4;
+    } else {
+      // 其他骨骼：轻微跟随
+      offsetY = Math.sin(t * 0.7) * params.amplitude * 0.5;
+    }
+
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(offsetX, offsetY, offsetZ, 'XYZ'));
+    b.quaternion.copy(baseQ).multiply(q);
+  });
+}
+
 function triggerProceduralHit() {
   if (!hitRig || !hitRig.candidates || hitRig.candidates.length === 0) return;
+  
+  // 暂停程序化跳舞
+  isDancing = false;
+  
   // 受击持续时间
   hitRig.ttl = 0.45;
 
@@ -1252,8 +1401,10 @@ const bubbleY2 = isMobile ? 1.6 : 2.0;
 const bubbleX1 = isMobile ? 1.0 : 1.6;
 const bubbleX2 = isMobile ? -1.0 : -1.6;
 
-const bubble1 = createBubble('压力山大!\n受够了!', new THREE.Vector3(bubbleX1, bubbleY1, 0));
-const bubble2 = createBubble('我要发泄!', new THREE.Vector3(bubbleX2, bubbleY2, 0.2));
+// 背景气泡放在人物后面（z 为负值，避免穿模）
+const bubbleZ = -1.8;  // 人物后面
+const bubble1 = createBubble('压力山大!\n受够了!', new THREE.Vector3(bubbleX1, bubbleY1, bubbleZ));
+const bubble2 = createBubble('我要发泄!', new THREE.Vector3(bubbleX2, bubbleY2, bubbleZ + 0.1));
 if (bubble1) bubble1.scale.setScalar(bubbleScale);
 if (bubble2) bubble2.scale.setScalar(bubbleScale);
 
@@ -1283,6 +1434,13 @@ flushBtn.onclick = () => {
   if (isFlushing) return;
   isFlushing = true;
   flushBtn.disabled = true;
+
+  // 暂停跳舞动画（如果有）
+  if (currentDanceAction) {
+    currentDanceAction.fadeOut(0.1);
+  }
+  // 暂停程序化跳舞
+  isDancing = false;
 
   playFlushSound();
 
@@ -1355,6 +1513,13 @@ function resetAfterFlush() {
     person.visible = true;
     flushBtn.disabled = false;
     isFlushing = false;
+    
+    // 恢复跳舞动画（如果有）
+    if (currentDanceAction) {
+      currentDanceAction.reset().fadeIn(0.3).play();
+    }
+    // 恢复程序化跳舞
+    isDancing = true;
   }, 3000);
 }
 
@@ -1411,8 +1576,45 @@ function animate() {
 
   updateSwirl(now);
 
-  if (mixer) mixer.update(dt);
-  else updateProceduralHit(dt);
+  if (mixer) {
+    mixer.update(dt);
+    
+    // 检查受击动画是否结束，如果结束则恢复跳舞
+    if (currentHitAction && currentHitAction.paused === false) {
+      const time = currentHitAction.time;
+      const duration = currentHitAction.getClip().duration;
+      if (time >= duration - 0.05) {  // 接近结束时
+        currentHitAction.paused = true;
+        currentHitAction = null;  // 清除受击动作
+        // 恢复跳舞动画（如果有）
+        if (currentDanceAction) {
+          currentDanceAction.reset().fadeIn(0.2).play();
+        }
+        // 恢复程序化跳舞
+        isDancing = true;
+      }
+    }
+    
+    // 如果有 mixer 但没有跳舞动画，使用程序化跳舞
+    if (!currentDanceAction && danceRig && isDancing) {
+      updateProceduralDance(dt);
+    }
+  } else {
+    // 没有 mixer：使用程序化受击和跳舞
+    if (hitRig && hitRig.ttl > 0) {
+      updateProceduralHit(dt);
+      // 受击进行中时暂停跳舞
+      if (isDancing) isDancing = false;
+    } else {
+      // 受击结束后，恢复跳舞
+      if (!isDancing && danceRig) {
+        isDancing = true;
+      }
+      if (danceRig && isDancing) {
+        updateProceduralDance(dt);
+      }
+    }
+  }
 
   // 更新鸡蛋
   for (let i = eggs.length - 1; i >= 0; i--) {
