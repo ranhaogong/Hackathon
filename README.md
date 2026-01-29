@@ -151,7 +151,6 @@
   - `style.css`：整体 UI & 移动端适配样式
 - 直接用浏览器打开 `index.html` 即可预览（推荐 Chrome/Edge）
 
-> 如果你要接入自己的大模型/语音转写服务，`main.js` 中的大模型配置和调用逻辑是集中在 `API_CONFIG`、`buildPrompt`、`getCurrentState`、`requestChatReply` 这些函数里，按需替换即可。
 
 
 
