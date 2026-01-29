@@ -168,6 +168,7 @@ const sloganDrops = [];
 loadPersonModel();
 setupSignUI();
 setupVoiceSpray();
+setupChatUI();
 
 function loadPersonModel() {
   const loader = new GLTFLoader();
@@ -274,6 +275,162 @@ function loadPersonModel() {
       console.error('加载 GLB 失败：', err);
     }
   );
+}
+
+/* ================= 移动端对话（气泡 + 大模型回复） ================= */
+// 可配置：你的大模型后端接口（同域），返回 { reply: "..." }
+const CHAT_API_URL = '/api/chat';
+
+const chatBubbles = [];
+
+function setupChatUI() {
+  const chatBar = document.getElementById('chatBar');
+  const chatInput = document.getElementById('chatInput');
+  const chatSend = document.getElementById('chatSend');
+  if (!chatBar || !chatInput || !chatSend) return;
+
+  const submit = async () => {
+    const txt = (chatInput.value || '').trim();
+    if (!txt) return;
+    chatInput.value = '';
+
+    // 禁用按钮，防止重复提交
+    chatSend.disabled = true;
+
+    // 用户输入的气泡从输入框位置飞向人物并击打
+    shootChatText(txt, async () => {
+      // 击打完成后，请求大模型回复（失败则兜底）
+      try {
+        const reply = await requestChatReply(txt);
+        // 延迟一点再显示AI回复，让受击效果更明显
+        setTimeout(() => {
+          spawnChatBubble(reply, 'ai');
+        }, 300);
+      } finally {
+        chatSend.disabled = false;
+      }
+    });
+  };
+
+  chatSend.addEventListener('click', submit);
+  chatInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      submit();
+    }
+  });
+}
+
+async function requestChatReply(userText) {
+  // 注意：纯前端无法安全保存 API Key，所以这里默认调用同域后端 `/api/chat`
+  try {
+    const res = await fetch(CHAT_API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: userText }),
+    });
+    if (!res.ok) throw new Error(`bad status ${res.status}`);
+    const data = await res.json();
+    const reply = (data?.reply || '').trim();
+    if (reply) return reply.slice(0, 80);
+    throw new Error('empty reply');
+  } catch (e) {
+    // 兜底：不阻塞体验（你接入后端后这里就不会走到了）
+    const pool = [
+      '我听见了。先深呼吸一下。',
+      '可以的，你继续说。',
+      '别急，我在。',
+      '压力不是你，压力只是来访者。',
+      '要不先把最难受的那句说出来？',
+    ];
+    return pool[Math.floor(Math.random() * pool.length)];
+  }
+}
+
+function getChatInputWorldPoint(distance = 3.0) {
+  const chatInput = document.getElementById('chatInput');
+  if (!chatInput) return new THREE.Vector3(0, -2, 3);
+  
+  const canvasRect = canvas.getBoundingClientRect();
+  const inputRect = chatInput.getBoundingClientRect();
+  const cx = inputRect.left + inputRect.width / 2;
+  const cy = inputRect.top + inputRect.height / 2;
+
+  const x = (cx - canvasRect.left) / canvasRect.width;
+  const y = (cy - canvasRect.top) / canvasRect.height;
+
+  const ndc = new THREE.Vector3(x * 2 - 1, -(y * 2 - 1), 0.5);
+  const p = ndc.clone().unproject(camera);
+  const dir = p.sub(camera.position).normalize();
+  return camera.position.clone().add(dir.multiplyScalar(distance));
+}
+
+function shootChatText(text, onHitCallback) {
+  if (!person) {
+    if (onHitCallback) onHitCallback();
+    return;
+  }
+
+  const start = getChatInputWorldPoint(3.0);
+  const target = person.localToWorld(faceTargetLocal.clone());
+  const control = start.clone().lerp(target, 0.5);
+  control.y += 0.8; // 控制点稍微高一点，形成弧形轨迹
+
+  const baseFont = 48;
+  const sp = createTextBubbleSprite(text, { 
+    fontSize: baseFont, 
+    padding: 48, 
+    maxWidth: 400 
+  });
+  sp.position.copy(start);
+  sp.scale.setScalar(0.3); // 初始较小
+  sp.renderOrder = 998;
+  sp.material.depthTest = false;
+  sp.material.depthWrite = false;
+  scene.add(sp);
+
+  const duration = 0.9; // 飞行时间
+
+  flyingTexts.push({
+    sprite: sp,
+    start,
+    control,
+    target,
+    t: 0,
+    duration,
+    amp: 1,
+    onHit: onHitCallback, // 添加回调
+  });
+}
+
+function spawnChatBubble(text, role = 'ai') {
+  if (!person) return;
+  const baseLocal = faceTargetLocal.clone();
+  // 让对话气泡在脸旁边，不要和受击回复完全重叠
+  const side = role === 'user' ? 0.55 : -0.55;
+  const local = baseLocal.clone().add(new THREE.Vector3(side, 0.65, -0.1));
+  const world = person.localToWorld(local);
+
+  const sp = createTextBubbleSprite(text, {
+    fontSize: 42,
+    padding: 44,
+    maxWidth: 420,
+  });
+  sp.position.copy(world);
+  sp.scale.set(1.9, 1.5, 1);
+  sp.material.opacity = 0.0;
+  sp.renderOrder = 998;
+  sp.material.depthTest = false;
+  sp.material.depthWrite = false;
+  scene.add(sp);
+
+  chatBubbles.push({
+    sprite: sp,
+    role,
+    life: 3.2,
+    maxLife: 3.2,
+    rise: 0.25 + Math.random() * 0.15,
+  });
 }
 
 function setupSignUI() {
@@ -2155,12 +2312,21 @@ function updateVoiceEffects(dt) {
 
     if (tt >= 1) {
       // 砸脸：抖动 + 碎裂/淡出
-      shake = Math.max(shake, 0.3);
+      const isChatBubble = !!f.onHit;
+      shake = Math.max(shake, isChatBubble ? 0.2 : 0.3); // 聊天气泡击打稍轻
       if (mixer && hitClips.length) playRandomHitReaction();
-      else triggerProceduralHit();
+      else triggerProceduralHit(); // 受击反应
       explodeText(f.sprite, f.target);
+      
+      // 如果是聊天输入的气泡，调用回调（用于显示AI回复）
+      // 如果是语音气泡，显示受击回复
+      if (f.onHit) {
+        f.onHit();
+      } else {
+        spawnHitReplyBubble();
+      }
+      
       flyingTexts.splice(i, 1);
-      spawnHitReplyBubble();
     }
   }
 
@@ -2195,6 +2361,26 @@ function updateVoiceEffects(dt) {
       scene.remove(item.sprite);
       disposeSprite(item.sprite);
       hitReplyBubbles.splice(i, 1);
+    }
+  }
+
+  // 移动端对话气泡（用户/AI）
+  for (let i = chatBubbles.length - 1; i >= 0; i--) {
+    const item = chatBubbles[i];
+    item.life -= dt;
+
+    const t = clamp(1 - item.life / item.maxLife, 0, 1);
+    const fadeIn = Math.min(t * 3, 1);
+    const fadeOut = clamp(item.life / (item.maxLife * 0.55), 0, 1);
+    const alpha = clamp(fadeIn * fadeOut, 0, 1);
+
+    item.sprite.position.y += dt * item.rise;
+    item.sprite.material.opacity = alpha;
+
+    if (item.life <= 0) {
+      scene.remove(item.sprite);
+      disposeSprite(item.sprite);
+      chatBubbles.splice(i, 1);
     }
   }
 
