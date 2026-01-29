@@ -244,8 +244,8 @@ function loadPersonModel() {
       const box2 = new THREE.Box3().setFromObject(model);
       model.position.y -= box2.min.y;
 
-      // 根据高度自动缩放到接近原卡通人物大小（头顶约 2.2m）
-      const targetHeight = 2.2;
+      // 根据高度自动缩放到合适大小（头顶约 1.5m，可根据需要调整）
+      const targetHeight = 1.2;  // 从2.2改为1.5，让模型更小
       const h = Math.max(size.y, 0.0001);
       const s = targetHeight / h;
       model.scale.setScalar(s);
@@ -1498,8 +1498,11 @@ flushBtn.onclick = () => {
   const startScale = person.scale.clone();
   const startRot = person.rotation.clone();
 
-  const targetPos = new THREE.Vector3(0, 0.35, -0.8);
-  const duration = 1200;
+  // 脚底位置（人物当前位置的正下方）
+  const footPos = new THREE.Vector3(startPos.x, 0, startPos.z);
+  const duration = 1500;  // 稍微延长总时长
+  const rotatePhase = 0.4;  // 前40%时间原地旋转
+  const suckPhase = 1 - rotatePhase;  // 后60%时间被吸走
   const startTime = performance.now();
   let lastParticleTime = 0;
   let lastFrameTime = startTime;
@@ -1510,35 +1513,84 @@ flushBtn.onclick = () => {
     const elapsed = now - startTime;
     const t = Math.min(elapsed / duration, 1);
 
-    // 缓动（强吸入）
-    const ease = t * t;
-
-    // 人物移动
-    person.position.lerpVectors(startPos, targetPos, ease);
-
-    // 缩小
-    const s = Math.max(1 - ease * 1.2, 0.02);
-    person.scale.setScalar(s);
-
-    // 疯狂旋转
-    person.rotation.y += 0.5;
-    person.rotation.z += 0.25;
-
-    // 🚿 冲水强化：旋涡加速 + 放大（更大）
-    water.scale.setScalar(1 + ease * 1.0);  // 放大更多
-    water.rotation.z -= 0.6;  // 旋转更快
+    // 判断当前阶段
+    const isRotating = t < rotatePhase;  // 旋转阶段
+    const isSucking = t >= rotatePhase;  // 吸走阶段
     
-    // 更新漩涡视觉效果（冲走时更明显）
-    updateSwirl(now, ease);
+    // 旋转阶段的进度（0-1）
+    const rotateProgress = isRotating ? t / rotatePhase : 1;
+    // 吸走阶段的进度（0-1）
+    const suckProgress = isSucking ? (t - rotatePhase) / suckPhase : 0;
 
-    // 生成水流粒子（持续生成，更频繁）
-    if (elapsed - lastParticleTime > 20) {  // 每20ms生成一批（更频繁）
-      lastParticleTime = elapsed;
-      spawnFlushParticles(targetPos, ease);
+    // 第一阶段：原地旋转
+    if (isRotating) {
+      // 保持位置不变
+      person.position.copy(startPos);
+      
+      // 加速旋转（越转越快）
+      const rotateSpeed = 0.3 + rotateProgress * 1.5;  // 从0.3加速到1.8
+      person.rotation.y += rotateSpeed;
+      person.rotation.z += rotateSpeed * 0.5;
+      
+      // 轻微缩小（旋转时开始缩小）
+      const s = 1 - rotateProgress * 0.3;
+      person.scale.setScalar(s);
+      
+      // 漩涡效果逐渐增强（在人物脚底）
+      const swirlIntensity = rotateProgress * 0.6;
+      updateSwirl(now, swirlIntensity);
+      // 将漩涡移动到人物脚底位置
+      const worldFootPos = footPos.clone();
+      const localFootPos = toilet.worldToLocal(worldFootPos);
+      water.position.copy(localFootPos);
+      water.position.y = 0.01;  // 稍微高于地面
+      water.scale.setScalar(0.5 + swirlIntensity * 0.8);
+      water.rotation.z -= 0.3 + swirlIntensity * 0.5;
+      
+      // 生成少量粒子（旋转阶段）
+      if (elapsed - lastParticleTime > 30) {
+        lastParticleTime = elapsed;
+        spawnFlushParticles(footPos, swirlIntensity * 0.5);
+      }
+    }
+    // 第二阶段：被脚底吸走
+    else {
+      // 强缓动（快速被吸入）
+      const ease = suckProgress * suckProgress * suckProgress;  // 三次方缓动，加速吸入
+      
+      // 从当前位置被吸到脚底
+      person.position.lerpVectors(startPos, footPos, ease);
+      
+      // 继续旋转（但速度逐渐减慢）
+      const rotateSpeed = 1.8 - suckProgress * 1.5;  // 从1.8减速到0.3
+      person.rotation.y += rotateSpeed;
+      person.rotation.z += rotateSpeed * 0.5;
+      
+      // 快速缩小
+      const baseScale = 0.7;  // 旋转阶段结束时的缩放
+      const s = Math.max(baseScale - ease * baseScale, 0.02);
+      person.scale.setScalar(s);
+      
+      // 漩涡效果达到最大（跟随人物脚底）
+      const swirlIntensity = 0.6 + suckProgress * 0.4;  // 从0.6到1.0
+      updateSwirl(now, swirlIntensity);
+      // 将漩涡移动到人物脚底位置（跟随人物）
+      const currentFootPos = new THREE.Vector3(person.position.x, 0, person.position.z);
+      const localFootPos = toilet.worldToLocal(currentFootPos);
+      water.position.copy(localFootPos);
+      water.position.y = 0.01;  // 稍微高于地面
+      water.scale.setScalar(0.8 + swirlIntensity * 1.2);  // 逐渐放大
+      water.rotation.z -= 0.6 + swirlIntensity * 0.4;
+      
+      // 生成大量粒子（吸走阶段）
+      if (elapsed - lastParticleTime > 20) {
+        lastParticleTime = elapsed;
+        spawnFlushParticles(footPos, swirlIntensity);
+      }
     }
 
-    // 更新水流粒子
-    updateFlushParticles(dt, targetPos, ease);
+    // 更新水流粒子（始终朝向脚底位置）
+    updateFlushParticles(dt, footPos, isSucking ? (0.6 + suckProgress * 0.4) : rotateProgress * 0.6);
 
     if (t < 1) {
       requestAnimationFrame(animateFlush);
@@ -1554,8 +1606,8 @@ flushBtn.onclick = () => {
 };
 
 function spawnFlushParticles(targetPos, intensity) {
-  // 从马桶位置生成水流粒子
-  const toiletPos = new THREE.Vector3(0, 0.46, -0.8);
+  // 从人物周围生成粒子，然后被吸向脚底
+  const personPos = person.position.clone();
   const count = Math.floor(6 + intensity * 12);  // 强度越大粒子越多（增大）
 
   for (let i = 0; i < count; i++) {
@@ -1570,19 +1622,22 @@ function spawnFlushParticles(targetPos, intensity) {
       })
     );
 
-    // 从马桶向上喷射，然后被吸入
+    // 从人物周围生成粒子（围绕人物）
     const angle = (i / count) * Math.PI * 2;
-    const radius = 0.2 + Math.random() * 0.15;  // 喷射范围更大
+    const radius = 0.3 + Math.random() * 0.2;  // 围绕人物的半径
+    const height = Math.random() * 1.5;  // 从脚底到头顶的高度范围
     particle.position.set(
-      toiletPos.x + Math.cos(angle) * radius,
-      toiletPos.y + Math.random() * 0.3,
-      toiletPos.z + Math.sin(angle) * radius
+      personPos.x + Math.cos(angle) * radius,
+      personPos.y + height,  // 从人物周围的高度生成
+      personPos.z + Math.sin(angle) * radius
     );
 
+    // 初始速度：轻微向外扩散，然后被吸向脚底
+    const toFoot = targetPos.clone().sub(particle.position);
     const vel = new THREE.Vector3(
-      (Math.random() - 0.5) * 0.5,  // 速度更大
-      0.6 + Math.random() * 0.5,   // 向上速度更大
-      (Math.random() - 0.5) * 0.5
+      (Math.random() - 0.5) * 0.2,  // 轻微随机
+      -0.3 - Math.random() * 0.3,   // 向下（被吸）
+      (Math.random() - 0.5) * 0.2
     );
 
     scene.add(particle);
@@ -1688,6 +1743,11 @@ function resetAfterFlush() {
   person.position.set(0, 0, 0);
   person.scale.set(1, 1, 1);
   person.rotation.set(0, 0, 0);
+  
+  // 重置漩涡位置到马桶
+  water.position.set(0, 0.46, 0);  // 回到马桶的本地坐标
+  water.scale.setScalar(1);
+  water.rotation.z = 0;
 
   // 清理所有蛋液
   for (let i = yolkStains.length - 1; i >= 0; i--) {
