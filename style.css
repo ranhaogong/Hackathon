@@ -431,6 +431,18 @@ canvas {
   border: none;
 }
 
+/* 扔西红柿按钮：左侧偏下，在鸡蛋按钮上方 */
+.tomato-btn {
+  position: absolute;
+  left: 16px;
+  bottom: 164px;
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  font-size: 26px;
+  border: none;
+}
+
 /* 木板按钮：左侧中间，在语音球对面 */
 .sign-btn {
   position: absolute;
@@ -559,6 +571,10 @@ canvas {
   
   .egg-btn {
     bottom: 140px; /* 根据新的工具栏高度调整（3个元素，每个约48px+间距） */
+  }
+  
+  .tomato-btn {
+    bottom: 208px; /* 在鸡蛋按钮上方 */
   }
 }
 

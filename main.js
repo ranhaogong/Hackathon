@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'https://unpkg.com/three@0.160.0/examples/jsm/libs/meshopt_decoder.module.js';
 
+// 版本标识：确保使用最新代码（如果看到旧版本，请硬刷新 Ctrl+Shift+R）
+console.log('=== 代码版本: 直接调用大模型API v1.0 ===');
+
 /* ================= 基础 ================= */
 const canvas = document.getElementById('three');
 
@@ -125,6 +128,8 @@ const shards = [];
 
 // 人物身上的蛋液效果
 const yolkStains = [];
+// 人物身上的西红柿汁液效果
+const tomatoStains = [];
 
 // 受击后的回复气泡
 const hitReplyBubbles = [];
@@ -278,10 +283,88 @@ function loadPersonModel() {
 }
 
 /* ================= 移动端对话（气泡 + 大模型回复） ================= */
-// 可配置：你的大模型后端接口（同域），返回 { reply: "..." }
-const CHAT_API_URL = '/api/chat';
+// =================配置区域=================
+// 大模型 API 配置（从 Node.js 提取）
+const API_CONFIG = {
+    apiKey: "sk-qoQLpscEnIazHZa2bxfMWgkxQDIT92daHnM7XwizDlfW9oYs", // 你的 Key
+    baseUrl: "http://34.13.73.248:3888/v1", // 接口地址
+    model: "Qwen/Qwen3-8B" // 模型名称
+};
+// =========================================
+
+// 验证配置
+console.log('=== 大模型配置 ===');
+console.log('API URL:', API_CONFIG.baseUrl);
+console.log('Model:', API_CONFIG.model);
+console.log('API Key:', API_CONFIG.apiKey ? `${API_CONFIG.apiKey.substring(0, 10)}...` : '未设置');
+if (!API_CONFIG.apiKey || !API_CONFIG.baseUrl || !API_CONFIG.model) {
+    console.warn('⚠️ API配置不完整，请检查配置！');
+}
+
+// 全局状态：受击次数
+let hitCount = 0;
 
 const chatBubbles = [];
+
+/**
+ * 生成 Prompt（从 Node.js 提取）
+ */
+function buildPrompt(actionType, content, state) {
+    let actionDesc = "";
+    switch (actionType) {
+        case 'speech': 
+        case 'chat': 
+            actionDesc = `用户对你说: "${content}"`; 
+            break;
+        case 'egg': 
+            actionDesc = `用户拿鸡蛋狠狠砸在了你脸上，黏糊糊的。`; 
+            break;
+        case 'tomato': 
+            actionDesc = `用户拿西红柿狠狠砸在了你身上，红色的汁液溅得到处都是。`; 
+            break;
+        case 'paint': 
+            actionDesc = `用户往你身上泼了一桶油漆，脏死了。`; 
+            break;
+        case 'flush': 
+            actionDesc = `用户按下了马桶冲水键，你正在旋转着被吸入下水道！(这是处决技)`; 
+            break;
+        case 'idle': 
+            actionDesc = `用户一直盯着你，但是什么都没做，气氛突然安静。`; 
+            break;
+        default: 
+            actionDesc = `用户碰了你一下。`;
+    }
+
+    const systemPrompt = `
+# Role
+你是一个减压游戏里的"贱萌受气包"。
+你必须根据【当前动作】和【挨揍状态】做出反应。
+
+# 状态定义
+1. **healthy (健康/嚣张)**: 嘲讽用户，嘴欠，看不起用户的攻击。
+2. **hurt (受伤/恼火)**: 气急败坏，抱怨疼，抱怨衣服脏了。
+3. **dying (濒死/求饶)**: 彻底认怂，无底线跪舔，求爸爸放过。
+
+# 约束
+- 回复必须**极短**（15字以内）。
+- 风格要**口语化**、贱兮兮。
+- 只输出台词，不要输出动作描述。
+`;
+
+    return [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: `【当前事件】: ${actionDesc}\n【当前身体状态】: ${state}` }
+    ];
+}
+
+/**
+ * 计算当前状态（从 Node.js 提取）
+ */
+function getCurrentState() {
+    if (hitCount > 10) return 'dying'; // 打10下求饶
+    if (hitCount > 5) return 'hurt';   // 打5下受伤
+    return 'healthy';                  // 刚开始很嚣张
+}
 
 function setupChatUI() {
   const chatBar = document.getElementById('chatBar');
@@ -296,20 +379,48 @@ function setupChatUI() {
 
     // 禁用按钮，防止重复提交
     chatSend.disabled = true;
+    const originalText = chatSend.textContent;
+    chatSend.textContent = '发送中...';
 
-    // 用户输入的气泡从输入框位置飞向人物并击打
+    try {
+      // 用户输入的气泡从输入框位置飞向人物并击打
     shootChatText(txt, async () => {
-      // 击打完成后，请求大模型回复（失败则兜底）
-      try {
-        const reply = await requestChatReply(txt);
-        // 延迟一点再显示AI回复，让受击效果更明显
-        setTimeout(() => {
-          spawnChatBubble(reply, 'ai');
-        }, 300);
-      } finally {
-        chatSend.disabled = false;
-      }
-    });
+        // 击打完成后，请求大模型回复（失败则兜底）
+        try {
+          console.log('开始请求大模型回复...');
+          const reply = await requestChatReply(txt, 'chat');
+          console.log('收到回复:', reply);
+          
+          // 延迟一点再显示AI回复，让受击效果更明显
+          setTimeout(() => {
+            if (reply) {
+              spawnChatBubble(reply, 'ai');
+              console.log('AI回复气泡已显示');
+            } else {
+              console.error('回复为空，无法显示');
+              spawnChatBubble('（回复获取失败）', 'ai');
+            }
+          }, 300);
+        } catch (error) {
+          console.error('获取回复时出错:', error);
+          // 确保即使出错也显示一个回复
+          setTimeout(() => {
+            spawnChatBubble('（网络错误，请稍后再试）', 'ai');
+          }, 300);
+        } finally {
+          chatSend.disabled = false;
+          chatSend.textContent = originalText;
+        }
+      });
+    } catch (error) {
+      console.error('提交时出错:', error);
+      chatSend.disabled = false;
+      chatSend.textContent = originalText;
+      // 即使出错也显示一个回复
+      setTimeout(() => {
+        spawnChatBubble('（发送失败，请重试）', 'ai');
+      }, 300);
+    }
   };
 
   chatSend.addEventListener('click', submit);
@@ -321,29 +432,90 @@ function setupChatUI() {
   });
 }
 
-async function requestChatReply(userText) {
-  // 注意：纯前端无法安全保存 API Key，所以这里默认调用同域后端 `/api/chat`
+async function requestChatReply(userText, actionType = 'chat') {
+  // ⚠️ 重要：直接调用大模型 API，不使用本地服务器
+  // 如果看到 /api/chat 错误，说明浏览器缓存了旧代码，请硬刷新（Ctrl+Shift+R）
+  console.log('=== 开始调用大模型 ===');
+  console.log('用户输入:', userText);
+  console.log('⚠️ 直接调用大模型API，不使用本地服务器');
+  console.log('动作类型:', actionType);
+  
   try {
-    const res = await fetch(CHAT_API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: userText }),
+    const state = getCurrentState();
+    console.log('当前状态:', state, '受击次数:', hitCount);
+    
+    const messages = buildPrompt(actionType || 'chat', userText, state);
+    console.log('发送的 Prompt:', messages);
+
+    console.log('📡 请求 URL:', API_CONFIG.baseUrl);
+    console.log('🤖 请求 Model:', API_CONFIG.model);
+    console.log('🔑 API Key:', API_CONFIG.apiKey ? `${API_CONFIG.apiKey.substring(0, 15)}...` : '未设置');
+
+    // 确保使用正确的API地址，不是 /api/chat
+    if (API_CONFIG.baseUrl.includes('/api/chat')) {
+      console.error('❌ 错误：API地址配置错误，不应包含 /api/chat');
+      throw new Error('API配置错误');
+    }
+
+    const response = await fetch(API_CONFIG.baseUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${API_CONFIG.apiKey}`
+      },
+      body: JSON.stringify({
+        model: API_CONFIG.model,
+        messages: messages,
+        temperature: 1.3,
+        max_tokens: 50
+      })
     });
-    if (!res.ok) throw new Error(`bad status ${res.status}`);
-    const data = await res.json();
-    const reply = (data?.reply || '').trim();
-    if (reply) return reply.slice(0, 80);
+
+    console.log('响应状态:', response.status, response.statusText);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('API 错误响应:', errorText);
+      throw new Error(`API Error: ${response.status} - ${errorText}`);
+    }
+
+    const data = await response.json();
+    console.log('API 响应数据:', data);
+    
+    // 处理不同的响应格式
+    let reply = '';
+    if (data.choices && data.choices[0] && data.choices[0].message) {
+      reply = (data.choices[0].message.content || '').trim();
+    } else if (data.content) {
+      reply = (data.content || '').trim();
+    } else if (data.message) {
+      reply = (data.message || '').trim();
+    }
+    
+    if (reply) {
+      console.log('成功获取回复:', reply);
+      return reply.slice(0, 80); // 限制长度
+    }
+    
+    console.warn('回复为空，使用兜底回复');
     throw new Error('empty reply');
   } catch (e) {
-    // 兜底：不阻塞体验（你接入后端后这里就不会走到了）
+    console.error('大模型调用失败:', e);
+    console.error('错误详情:', e.message, e.stack);
+    
+    // 兜底：确保始终有回复，不阻塞体验
     const pool = [
       '我听见了。先深呼吸一下。',
       '可以的，你继续说。',
       '别急，我在。',
       '压力不是你，压力只是来访者。',
       '要不先把最难受的那句说出来？',
+      '嗯嗯，我在听。',
+      '继续说，我听着呢。',
     ];
-    return pool[Math.floor(Math.random() * pool.length)];
+    const fallbackReply = pool[Math.floor(Math.random() * pool.length)];
+    console.log('使用兜底回复:', fallbackReply);
+    return fallbackReply;
   }
 }
 
@@ -404,14 +576,22 @@ function shootChatText(text, onHitCallback) {
 }
 
 function spawnChatBubble(text, role = 'ai') {
-  if (!person) return;
+  if (!person) {
+    console.warn('人物未加载，无法显示聊天气泡');
+    return;
+  }
+  
+  // 确保文本不为空
+  const displayText = (text || '').trim() || '...';
+  console.log('生成聊天气泡:', displayText, '角色:', role);
+  
   const baseLocal = faceTargetLocal.clone();
   // 让对话气泡在脸旁边，不要和受击回复完全重叠
   const side = role === 'user' ? 0.55 : -0.55;
   const local = baseLocal.clone().add(new THREE.Vector3(side, 0.65, -0.1));
   const world = person.localToWorld(local);
 
-  const sp = createTextBubbleSprite(text, {
+  const sp = createTextBubbleSprite(displayText, {
     fontSize: 42,
     padding: 44,
     maxWidth: 420,
@@ -499,6 +679,10 @@ function setupVoiceSpray() {
       const txt = (voiceInput.value || '').trim();
       const content = txt || '（气到说不出话）';
       shootVoiceText(content, pendingVoiceAmp || 1);
+      // 语音/手动输入：也把文本传给大模型，拿回复气泡（失败自动兜底）
+      requestChatReply(content, 'speech').then((reply) => {
+        spawnChatBubble(reply, 'ai');
+      });
       closeVoiceModal();
     });
     voiceCancel.addEventListener('click', () => {
@@ -634,6 +818,10 @@ function stopVoiceRecording() {
   if (usedWebSpeech) {
     // 桌面浏览器 / 支持 Web Speech：直接用识别的中文发射
     shootVoiceText(finalText, amp);
+    // 识别到文字后：也传入大模型拿回复（失败自动兜底）
+    requestChatReply(finalText, 'speech').then((reply) => {
+      spawnChatBubble(reply, 'ai');
+    });
   } else if (voiceModal && voiceInput && voiceSend) {
     // 移动端 / 不支持实时语音：弹出输入弹窗，请用户打字
     openVoiceModal(finalText);
@@ -1301,6 +1489,53 @@ function splitTextToLines(text, maxLines) {
 
 /* ================= 鸡蛋（3D 抛物线） ================= */
 const eggs = [];
+const tomatoes = [];
+
+function createTomatoTexture() {
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 256;
+  const ctx = c.getContext('2d');
+
+  // 基础红色（西红柿）
+  ctx.fillStyle = '#dc2626';
+  ctx.fillRect(0, 0, c.width, c.height);
+
+  // 红色渐变（顶部稍亮，底部稍暗）
+  const grad = ctx.createRadialGradient(c.width * 0.4, c.height * 0.3, 0, c.width * 0.5, c.height * 0.5, c.width * 0.6);
+  grad.addColorStop(0, 'rgba(255,100,100,0.8)');
+  grad.addColorStop(0.5, 'rgba(220,38,38,0.6)');
+  grad.addColorStop(1, 'rgba(153,27,27,0.4)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, c.width, c.height);
+
+  // 西红柿表面的小斑点/纹理
+  ctx.fillStyle = 'rgba(180,30,30,0.5)';
+  for (let i = 0; i < 20; i++) {
+    const x = Math.random() * c.width;
+    const y = Math.random() * c.height;
+    const r = 1 + Math.random() * 2;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 高光点（顶部）
+  ctx.fillStyle = 'rgba(255,200,200,0.7)';
+  ctx.beginPath();
+  ctx.arc(c.width * 0.35, c.height * 0.25, c.width * 0.15, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 叶子/蒂（顶部）
+  ctx.fillStyle = '#16a34a';
+  ctx.beginPath();
+  ctx.ellipse(c.width * 0.5, c.height * 0.15, c.width * 0.08, c.height * 0.12, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
 
 function createEggShellTexture() {
   const c = document.createElement('canvas');
@@ -1435,6 +1670,57 @@ function createYolkStainTexture() {
   return tex;
 }
 
+function createTomatoStainTexture() {
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 256;
+  const ctx = c.getContext('2d');
+
+  // 半透明背景（用于混合）
+  ctx.clearRect(0, 0, c.width, c.height);
+
+  // 主西红柿汁液区域（红色，不规则形状）
+  const centerX = c.width / 2;
+  const centerY = c.height * 0.4;
+  
+  // 主滴落点（红色）
+  const mainGrad = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, 60);
+  mainGrad.addColorStop(0, 'rgba(220,38,38,0.9)');  // 深红色中心
+  mainGrad.addColorStop(0.5, 'rgba(239,68,68,0.8)'); // 红色
+  mainGrad.addColorStop(1, 'rgba(185,28,28,0.6)');   // 暗红色边缘
+  ctx.fillStyle = mainGrad;
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, 60, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 滴落轨迹（向下，红色）
+  ctx.fillStyle = 'rgba(220,38,38,0.7)';
+  for (let i = 0; i < 3; i++) {
+    const y = centerY + 50 + i * 25;
+    const x = centerX + (Math.random() - 0.5) * 15;
+    const w = 8 + Math.random() * 6;
+    const h = 20 + Math.random() * 10;
+    ctx.fillRect(x - w/2, y, w, h);
+  }
+
+  // 飞溅小点（红色）
+  ctx.fillStyle = 'rgba(239,68,68,0.6)';
+  for (let i = 0; i < 15; i++) {
+    const angle = (i / 15) * Math.PI * 2;
+    const dist = 40 + Math.random() * 35;
+    const x = centerX + Math.cos(angle) * dist;
+    const y = centerY + Math.sin(angle) * dist;
+    const r = 2 + Math.random() * 4;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 function spawnYolkStainOnPerson(hitWorldPos) {
   if (!person || !modelRoot) return;
   
@@ -1466,6 +1752,40 @@ function spawnYolkStainOnPerson(hitWorldPos) {
     life: 8.0,  // 持续8秒
     maxLife: 8.0,
     dripSpeed: 0.15 + Math.random() * 0.1,  // 滴落速度
+  });
+}
+
+function spawnTomatoStainOnPerson(hitWorldPos) {
+  if (!person || !modelRoot) return;
+  
+  // 将世界坐标转换为模型局部坐标（相对于 modelRoot，不是 person）
+  const localPos = modelRoot.worldToLocal(hitWorldPos.clone());
+  
+  // 创建西红柿汁液 Sprite
+  const stainTex = createTomatoStainTexture();
+  const stainMat = new THREE.SpriteMaterial({
+    map: stainTex,
+    transparent: true,
+    opacity: 1.0,
+    depthTest: true,  // 启用深度测试，让它正确跟随模型
+    depthWrite: false,
+  });
+  const stainSprite = new THREE.Sprite(stainMat);
+  
+  // 附着在模型上（modelRoot），这样会跟随骨骼动画和受击动作
+  stainSprite.position.copy(localPos);
+  stainSprite.scale.set(0.45, 0.55, 1);  // 稍微大一点，更明显
+  stainSprite.renderOrder = 5;
+  
+  modelRoot.add(stainSprite);
+  
+  tomatoStains.push({
+    sprite: stainSprite,
+    localPos: localPos.clone(),
+    parent: modelRoot,  // 记录父对象，方便清理
+    life: 8.0,  // 持续8秒
+    maxLife: 8.0,
+    dripSpeed: 0.18 + Math.random() * 0.12,  // 滴落速度（稍快一点）
   });
 }
 
@@ -1509,6 +1829,47 @@ function createEgg() {
 }
 
 document.getElementById('eggBtn').onclick = createEgg;
+
+function createTomato() {
+  // 椭球形：用球体然后 scale（比鸡蛋稍圆一点）
+  const tomatoGeo = new THREE.SphereGeometry(0.13, 16, 16);
+  tomatoGeo.scale(1, 1.2, 1); // Y 轴稍微拉长
+
+  const tomatoTex = createTomatoTexture();
+  const tomatoMat = new THREE.MeshStandardMaterial({
+    map: tomatoTex,
+    roughness: 0.8,
+    metalness: 0.0,
+  });
+
+  const tomato = new THREE.Mesh(tomatoGeo, tomatoMat);
+  tomato.position.set((Math.random() - 0.5) * 1.2, 0.6, 3);
+
+  // 随机瞄准人物的不同位置（从头到脚都可以，平均高度更高）
+  const targetY = (() => {
+    const r = Math.random();
+    if (r < 0.3) return 2.2 + Math.random() * 0.4;      // 头部区域（2.2-2.6）- 30%概率
+    else if (r < 0.65) return 1.4 + Math.random() * 0.6;  // 胸部区域（1.4-2.0）- 35%概率
+    else if (r < 0.9) return 0.8 + Math.random() * 0.6;  // 肚子区域（0.8-1.4）- 25%概率
+    else return 0.2 + Math.random() * 0.6;              // 腿部区域（0.2-0.8）- 10%概率
+  })();
+  const targetX = (Math.random() - 0.5) * 0.6;  // 左右随机偏移
+  const targetZ = (Math.random() - 0.5) * 0.4;  // 前后随机偏移
+
+  tomato.userData = {
+    t: 0,
+    start: tomato.position.clone(),
+    end: new THREE.Vector3(targetX, targetY, targetZ),
+    isHit: false,
+  };
+
+  scene.add(tomato);
+  tomatoes.push(tomato);
+
+  playEggThrowSound(); // 复用鸡蛋音效
+}
+
+document.getElementById('tomatoBtn').onclick = createTomato;
 
 /* ================= 马桶 + 漩涡 ================= */
 const toilet = new THREE.Group();
@@ -1983,6 +2344,24 @@ function resetAfterFlush() {
     yolkStains.splice(i, 1);
   }
 
+  // 清理所有西红柿
+  for (let i = tomatoes.length - 1; i >= 0; i--) {
+    const tomato = tomatoes[i];
+    scene.remove(tomato);
+    tomato.geometry.dispose();
+    tomato.material.dispose();
+    if (tomato.material.map) tomato.material.map.dispose();
+    tomatoes.splice(i, 1);
+  }
+
+  // 清理所有西红柿汁液
+  for (let i = tomatoStains.length - 1; i >= 0; i--) {
+    const stain = tomatoStains[i];
+    if (stain.parent) stain.parent.remove(stain.sprite);
+    disposeSprite(stain.sprite);
+    tomatoStains.splice(i, 1);
+  }
+
   // 清理所有水流粒子（延迟清理，让粒子自然消失）
   setTimeout(() => {
     flushParticles.forEach(p => {
@@ -2010,6 +2389,9 @@ function resetAfterFlush() {
     person.visible = true;
     flushBtn.disabled = false;
     isFlushing = false;
+    
+    // 重置受击次数（冲走后重新开始）
+    hitCount = 0;
     
     // 恢复跳舞动画（如果有）
     if (currentDanceAction) {
@@ -2151,6 +2533,9 @@ function animate() {
       // 在人物身上生成蛋液贴图
       spawnYolkStainOnPerson(hitPos);
       
+      // 增加受击次数（用于大模型状态判断）
+      hitCount++;
+      
       shake = 0.3;
       if (mixer && hitClips.length) playRandomHitReaction();
       else triggerProceduralHit();
@@ -2163,6 +2548,61 @@ function animate() {
     egg.position.y += Math.sin(Math.PI * t) * 1.5;
     egg.rotation.x += 0.2;
     egg.rotation.z += 0.2;
+  }
+
+  // 更新西红柿（击中后停留1秒再消失）
+  for (let i = tomatoes.length - 1; i >= 0; i--) {
+    const tomato = tomatoes[i];
+    
+    // 击中后只更新旋转，不再移动
+    if (tomato.userData.isHit) {
+      tomato.rotation.x += 0.2;
+      tomato.rotation.z += 0.2;
+      
+      // 击中后停留1秒再移除
+      if (performance.now() - tomato.userData.hitTime > 1000) {
+        scene.remove(tomato);
+        tomato.geometry.dispose();
+        tomato.material.dispose();
+        tomato.material.map.dispose();
+        tomatoes.splice(i, 1);
+      }
+      continue;
+    }
+    
+    tomato.userData.t += dt * 1.2;
+    const t = tomato.userData.t;
+    
+    // 受击提前触发（t >= 0.85），避免穿模到模型内部
+    if (t >= 0.85) {
+      // 受击：停在受击位置
+      tomato.userData.isHit = true;
+      tomato.userData.hitTime = performance.now();
+      
+      // 停在受击位置（提前计算，避免穿模）
+      const hitT = 0.85;
+      const hitPos = tomato.userData.start.clone().lerp(tomato.userData.end, hitT);
+      hitPos.y += Math.sin(Math.PI * hitT) * 1.5;
+      tomato.position.copy(hitPos);
+      
+      // 在人物身上生成红色西红柿汁液贴图
+      spawnTomatoStainOnPerson(hitPos);
+      
+      // 增加受击次数（用于大模型状态判断）
+      hitCount++;
+      
+      shake = 0.3;
+      if (mixer && hitClips.length) playRandomHitReaction();
+      else triggerProceduralHit();
+      spawnHitReplyBubble();
+      continue;
+    }
+    
+    // 正常飞行轨迹
+    tomato.position.lerpVectors(tomato.userData.start, tomato.userData.end, t);
+    tomato.position.y += Math.sin(Math.PI * t) * 1.5;
+    tomato.rotation.x += 0.2;
+    tomato.rotation.z += 0.2;
   }
 
   // 更新人物身上的蛋液效果（滴落 + 淡出）
@@ -2186,6 +2626,30 @@ function animate() {
       if (stain.parent) stain.parent.remove(stain.sprite);
       disposeSprite(stain.sprite);
       yolkStains.splice(i, 1);
+    }
+  }
+
+  // 更新人物身上的西红柿汁液效果（滴落 + 淡出）
+  for (let i = tomatoStains.length - 1; i >= 0; i--) {
+    const stain = tomatoStains[i];
+    stain.life -= dt;
+    
+    // 滴落效果：向下移动
+    stain.localPos.y -= dt * stain.dripSpeed;
+    stain.sprite.position.copy(stain.localPos);
+    
+    // 淡出效果
+    const fadeOut = clamp(stain.life / stain.maxLife, 0, 1);
+    stain.sprite.material.opacity = fadeOut * 0.9;
+    
+    // 轻微缩放（模拟扩散）
+    const scale = 0.45 + (1 - fadeOut) * 0.25;
+    stain.sprite.scale.set(scale, scale * 1.25, 1);
+    
+    if (stain.life <= 0) {
+      if (stain.parent) stain.parent.remove(stain.sprite);
+      disposeSprite(stain.sprite);
+      tomatoStains.splice(i, 1);
     }
   }
 
@@ -2319,10 +2783,13 @@ function updateVoiceEffects(dt) {
       explodeText(f.sprite, f.target);
       
       // 如果是聊天输入的气泡，调用回调（用于显示AI回复）
-      // 如果是语音气泡，显示受击回复
+      // 如果是语音气泡，显示受击回复并增加受击次数
       if (f.onHit) {
+        // 聊天气泡不增加受击次数（因为是对话）
         f.onHit();
       } else {
+        // 语音气泡增加受击次数
+        hitCount++;
         spawnHitReplyBubble();
       }
       
