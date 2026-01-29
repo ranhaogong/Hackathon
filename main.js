@@ -707,6 +707,11 @@ function hasWebSpeech() {
   return typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
 }
 
+function isIOS() {
+  const ua = navigator.userAgent || '';
+  return /iPhone|iPad|iPod/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
 async function startVoiceRecording() {
   if (isVoiceRecording) return;
   isVoiceRecording = true;
@@ -726,8 +731,10 @@ async function startVoiceRecording() {
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
       speechRecognizer = new SR();
       speechRecognizer.lang = 'zh-CN';
-      speechRecognizer.continuous = true;
+      // 移动端兼容：部分浏览器 continuous=true 会不稳定；iOS 基本不可用（通常没有 SR）
+      speechRecognizer.continuous = !isIOS();
       speechRecognizer.interimResults = true;
+      speechRecognizer.maxAlternatives = 1;
 
       speechRecognizer.onresult = (event) => {
         let interim = '';
@@ -745,12 +752,21 @@ async function startVoiceRecording() {
         }
       };
 
-      speechRecognizer.onerror = () => {
-        // 出错也允许用户结束，最终会走占位文本
+      speechRecognizer.onerror = (e) => {
+        // 移动端常见：not-allowed / service-not-allowed / aborted / no-speech / network
+        // 不立即弹窗，允许用户点结束；如果确实不可用，stop 时会走降级
+        // 但如果直接报权限问题，立刻降级到手动输入更友好
+        const err = e?.error || '';
+        if (err === 'not-allowed' || err === 'service-not-allowed') {
+          usedWebSpeech = false;
+        }
       };
 
       speechRecognizer.onend = () => {
-        // 部分浏览器会自动停止；如果我们还处于录音态，就保持 UI，不自动发射
+        // 移动端常会自动停止：如果仍在录音态，自动重启以提高可用性（Android/部分浏览器）
+        if (isVoiceRecording && usedWebSpeech) {
+          try { speechRecognizer.start(); } catch {}
+        }
       };
 
       speechRecognizer.start();
@@ -2680,6 +2696,36 @@ function animate() {
 animate();
 
 function playFlushSound() {
+  // 优先使用本地 mp3 冲水音效（用户提供）
+  // 由于浏览器自动播放策略，必须在用户手势触发（点击冲走按钮）时播放
+  try {
+    if (!window.__flushSfx) {
+      const a = new Audio('assets/toilet-bowl-flush.mp3');
+      a.preload = 'auto';
+      a.volume = 0.85;
+      window.__flushSfx = a;
+    }
+    const a = window.__flushSfx;
+    a.currentTime = 0;
+    const p = a.play();
+    if (p && typeof p.catch === 'function') {
+      p.catch(() => {
+        // 播放失败则回退到合成音效
+        playFlushSoundSynth();
+      });
+      return;
+    }
+    // 能走到这里，说明同步播放成功
+    return;
+  } catch {
+    // 任何异常都回退到合成音效
+  }
+
+  playFlushSoundSynth();
+}
+
+// 原合成冲水音效（作为兜底）
+function playFlushSoundSynth() {
   const ctx = getAudioContext();
   if (!ctx) return;
   if (ctx.state === 'suspended') ctx.resume();
