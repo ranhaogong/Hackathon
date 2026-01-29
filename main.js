@@ -91,7 +91,7 @@ let signMesh = null;
 let signCanvas = null;
 let signCtx = null;
 let signTex = null;
-let currentSignText = '你好';
+let currentSignText = '哥布林';
 
 /* ================= 语音喷他（移动端优先） ================= */
 const voiceBall = document.getElementById('voiceBall');
@@ -1437,7 +1437,8 @@ function createOrUpdateSignMesh(model) {
 
   signMesh = new THREE.Mesh(new THREE.PlaneGeometry(boardW, boardH), woodMat);
   // “胸前”位置：居中偏上，再往上移动（从0.88增加到0.95）
-  signMesh.position.set(0, Math.max(2.8, size.y * 0.95), Math.max(0.25, size.z * 0.35));
+  // 木板高度：再上移一点
+  signMesh.position.set(0, Math.max(3.8, size.y * 1.02), Math.max(0.25, size.z * 0.35));
   signMesh.rotation.y = 0; // 默认朝向相机；如果模型面向反了，再调成 Math.PI
   signMesh.renderOrder = 2;
 
