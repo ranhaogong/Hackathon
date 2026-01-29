@@ -541,7 +541,8 @@ canvas {
     gap: 10px; /* 使用gap替代margin-bottom */
   }
 
-  .toolbar button {
+  /* 只影响底部主按钮（不要影响聊天发送按钮） */
+  .toolbar > button {
     width: 100%;
     max-width: none;
     min-height: 48px; /* 确保触摸目标足够大（iOS推荐44px+） */
@@ -553,7 +554,7 @@ canvas {
   }
   
   /* 确保按钮有足够的对比度和可见性 */
-  .toolbar button {
+  .toolbar > button {
     background: rgba(255,255,255,0.95);
     color: #333;
     border: 1px solid rgba(255,255,255,0.3);
@@ -569,6 +570,28 @@ canvas {
     border: 1px solid rgba(255,75,75,0.5);
   }
   
+  /* 移动端聊天栏：输入框更大，按钮更小 */
+  .chatbar {
+    width: 100%;
+    gap: 8px;
+  }
+
+  .chatbar-input {
+    flex: 1 1 auto;
+    height: 48px;
+    font-size: 16px;
+    padding: 0 14px;
+  }
+
+  .chatbar-send {
+    flex: 0 0 auto;
+    height: 48px;
+    min-width: 72px;  /* 按钮更小 */
+    padding: 0 12px;  /* 按钮更窄 */
+    font-size: 14px;
+    border-radius: 999px;
+  }
+
   .egg-btn {
     bottom: 140px; /* 根据新的工具栏高度调整（3个元素，每个约48px+间距） */
   }
