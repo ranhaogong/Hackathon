@@ -332,6 +332,18 @@ html, body {
 body {
   display: flex;
   flex-direction: column;
+  position: relative;
+  background: #2b0000; /* 兜底底色 */
+}
+
+/* 放射状背景独立成层，并以中心缓慢旋转 */
+body::before {
+  content: "";
+  position: fixed;
+  /* 旋转时避免露出短边/长边：扩大覆盖范围 */
+  inset: -70%;
+  pointer-events: none;
+  z-index: 0;
   background:
     radial-gradient(circle at 50% 70%, rgba(255,255,255,0.55) 0 36%, rgba(255,255,255,0) 62%),
     repeating-conic-gradient(
@@ -343,6 +355,25 @@ body {
       #118ab2 48deg 60deg
     ),
     radial-gradient(circle at bottom, #fff7e6, #ffe0cc 55%, #ffd1d1);
+  transform-origin: 50% 50%;
+  animation: bgSpin 80s linear infinite;
+  will-change: transform;
+}
+
+@keyframes bgSpin {
+  /* 固定放大倍率，确保旋转时始终覆盖整个视口 */
+  from { transform: rotate(0deg) scale(1.35); }
+  to { transform: rotate(360deg) scale(1.35); }
+}
+
+/* 内容层抬高到旋转背景之上 */
+.top,
+.stage,
+.toolbar,
+.voice-modal,
+.sign-modal {
+  position: relative;
+  z-index: 1;
 }
 
 .top {
