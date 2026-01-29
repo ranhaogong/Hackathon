@@ -2876,6 +2876,8 @@ function updateVoiceEffects(dt) {
   // 录音中的临时气泡跟随按钮位置
   if (isVoiceRecording && liveVoiceSprite && voiceBall) {
     liveVoiceSprite.position.copy(getVoiceBallWorldPoint(3.0));
+    // 移动端：把临时气泡抬高一点，避免与按钮重合
+    liveVoiceSprite.position.y += (window.innerWidth <= 768) ? 0.9 : 0.5;
   }
 
   // 飞行气泡：从语音球飞向脸部（曲线 + 缩放）
