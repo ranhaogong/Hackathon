@@ -9,8 +9,14 @@ const canvas = document.getElementById('three');
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0x1a0000, 6, 12);
 
-const camera = new THREE.PerspectiveCamera(45, canvas.clientWidth / canvas.clientHeight, 0.1, 50);
-camera.position.set(0, 2.4, 6);
+// 检测移动端
+const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || window.innerWidth <= 768;
+const baseFOV = isMobile ? 55 : 45;  // 移动端视野更广
+const baseCameraY = isMobile ? 2.6 : 2.4;
+const baseCameraZ = isMobile ? 7 : 6;
+
+const camera = new THREE.PerspectiveCamera(baseFOV, canvas.clientWidth / canvas.clientHeight, 0.1, 50);
+camera.position.set(0, baseCameraY, baseCameraZ);
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
 renderer.setSize(canvas.clientWidth, canvas.clientHeight);
@@ -18,11 +24,22 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMappingExposure = 1.2;
 
-window.addEventListener('resize', () => {
+function updateCameraForViewport() {
+  const isMobileNow = window.innerWidth <= 768;
+  const fov = isMobileNow ? 55 : 45;
+  const camY = isMobileNow ? 2.6 : 2.4;
+  const camZ = isMobileNow ? 7 : 6;
+  
+  camera.fov = fov;
+  camera.position.y = camY;
+  camera.position.z = camZ;
   camera.aspect = canvas.clientWidth / canvas.clientHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(canvas.clientWidth, canvas.clientHeight);
-});
+}
+
+window.addEventListener('resize', updateCameraForViewport);
+updateCameraForViewport();  // 初始化时调用一次
 
 /* ================= 灯光 ================= */
 scene.add(new THREE.AmbientLight(0xffffff, 0.7));
@@ -100,6 +117,9 @@ let liveVoiceText = '';
 // 飞行中的气泡 + 碎裂碎片
 const flyingTexts = [];
 const shards = [];
+
+// 人物身上的蛋液效果
+const yolkStains = [];
 
 // 受击后的回复气泡
 const hitReplyBubbles = [];
@@ -789,18 +809,30 @@ function spawnFlushSlogan() {
   const raw = flushSlogans[Math.floor(Math.random() * flushSlogans.length)];
   const text = raw.trim();
 
+  // 根据移动端调整文字大小
+  const isMobileNow = window.innerWidth <= 768;
+  const fontSize = isMobileNow ? 64 : 88;
+  const padding = isMobileNow ? 50 : 70;
+  const maxWidth = isMobileNow ? 520 : 720;
+
   // 生成大号卡通文字 Sprite
   const sp = createTextBubbleSprite(text, {
-    fontSize: 88,
-    padding: 70,
-    maxWidth: 720,
+    fontSize,
+    padding,
+    maxWidth,
   });
 
-  // 出生在人物头顶偏上的高空，从天而降
-  const start = new THREE.Vector3(0, 7.5, 0);
-  const end = new THREE.Vector3(0, 3.0, 0);
+  // 出生在人物头顶偏上的高空，从天而降（移动端调整位置）
+  const startY = isMobileNow ? 6.5 : 7.5;
+  const endY = isMobileNow ? 2.2 : 3.0;
+  const start = new THREE.Vector3(0, startY, 0);
+  const end = new THREE.Vector3(0, endY, 0);
   sp.position.copy(start);
-  sp.scale.set(4.5, 3.4, 1);
+  
+  // 移动端缩小一点，确保完整显示
+  const scaleX = isMobileNow ? 3.2 : 4.5;
+  const scaleY = isMobileNow ? 2.4 : 3.4;
+  sp.scale.set(scaleX, scaleY, 1);
   sp.material.opacity = 0;
   // 始终绘制在最前面，不被场景遮挡
   sp.material.depthTest = false;
@@ -814,6 +846,8 @@ function spawnFlushSlogan() {
     end,
     t: 0,
     duration: 3.0,
+    baseScaleX: scaleX,  // 保存初始缩放
+    baseScaleY: scaleY,
   });
 }
 
@@ -923,17 +957,203 @@ function splitTextToLines(text, maxLines) {
 /* ================= 鸡蛋（3D 抛物线） ================= */
 const eggs = [];
 
+function createEggShellTexture() {
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 256;
+  const ctx = c.getContext('2d');
+
+  // 基础米白色
+  ctx.fillStyle = '#fff8e8';
+  ctx.fillRect(0, 0, c.width, c.height);
+
+  // 轻微渐变（顶部稍亮）
+  const grad = ctx.createLinearGradient(0, 0, 0, c.height);
+  grad.addColorStop(0, 'rgba(255,255,255,0.3)');
+  grad.addColorStop(1, 'rgba(240,230,210,0.2)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, c.width, c.height);
+
+  // 随机小斑点（蛋壳纹理）
+  ctx.fillStyle = 'rgba(220,200,180,0.4)';
+  for (let i = 0; i < 25; i++) {
+    const x = Math.random() * c.width;
+    const y = Math.random() * c.height;
+    const r = 1 + Math.random() * 2;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 高光点
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.beginPath();
+  ctx.arc(c.width * 0.3, c.height * 0.25, 20, 0, Math.PI * 2);
+  ctx.fill();
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function createYolkTexture() {
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 256;
+  const ctx = c.getContext('2d');
+
+  // 蛋黄中心（橙黄色）
+  const centerX = c.width / 2;
+  const centerY = c.height / 2;
+  const radius = 80;
+
+  const yolkGrad = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, radius);
+  yolkGrad.addColorStop(0, '#ffd700');
+  yolkGrad.addColorStop(0.6, '#ffb347');
+  yolkGrad.addColorStop(1, '#ff8c42');
+  ctx.fillStyle = yolkGrad;
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 蛋白（半透明白色，边缘）
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, radius + 15, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 蛋白外层（更透明）
+  ctx.fillStyle = 'rgba(255,255,255,0.3)';
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, radius + 35, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 高光
+  ctx.fillStyle = 'rgba(255,255,255,0.8)';
+  ctx.beginPath();
+  ctx.arc(centerX - 15, centerY - 15, 12, 0, Math.PI * 2);
+  ctx.fill();
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function createYolkStainTexture() {
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 256;
+  const ctx = c.getContext('2d');
+
+  // 半透明背景（用于混合）
+  ctx.clearRect(0, 0, c.width, c.height);
+
+  // 主蛋液区域（橙黄色，不规则形状）
+  const centerX = c.width / 2;
+  const centerY = c.height * 0.4;
+  
+  // 主滴落点
+  const mainGrad = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, 60);
+  mainGrad.addColorStop(0, 'rgba(255,215,0,0.9)');
+  mainGrad.addColorStop(0.5, 'rgba(255,179,71,0.8)');
+  mainGrad.addColorStop(1, 'rgba(255,140,66,0.6)');
+  ctx.fillStyle = mainGrad;
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, 60, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 滴落轨迹（向下）
+  ctx.fillStyle = 'rgba(255,200,100,0.7)';
+  for (let i = 0; i < 3; i++) {
+    const y = centerY + 50 + i * 25;
+    const x = centerX + (Math.random() - 0.5) * 15;
+    const w = 8 + Math.random() * 6;
+    const h = 20 + Math.random() * 10;
+    ctx.fillRect(x - w/2, y, w, h);
+  }
+
+  // 飞溅小点
+  ctx.fillStyle = 'rgba(255,180,80,0.6)';
+  for (let i = 0; i < 12; i++) {
+    const angle = (i / 12) * Math.PI * 2;
+    const dist = 40 + Math.random() * 30;
+    const x = centerX + Math.cos(angle) * dist;
+    const y = centerY + Math.sin(angle) * dist;
+    const r = 2 + Math.random() * 3;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function spawnYolkStainOnPerson(hitWorldPos) {
+  if (!person || !modelRoot) return;
+  
+  // 将世界坐标转换为模型局部坐标（相对于 modelRoot，不是 person）
+  const localPos = modelRoot.worldToLocal(hitWorldPos.clone());
+  
+  // 创建蛋液 Sprite
+  const stainTex = createYolkStainTexture();
+  const stainMat = new THREE.SpriteMaterial({
+    map: stainTex,
+    transparent: true,
+    opacity: 1.0,
+    depthTest: true,  // 启用深度测试，让它正确跟随模型
+    depthWrite: false,
+  });
+  const stainSprite = new THREE.Sprite(stainMat);
+  
+  // 附着在模型上（modelRoot），这样会跟随骨骼动画和受击动作
+  stainSprite.position.copy(localPos);
+  stainSprite.scale.set(0.4, 0.5, 1);
+  stainSprite.renderOrder = 5;
+  
+  modelRoot.add(stainSprite);
+  
+  yolkStains.push({
+    sprite: stainSprite,
+    localPos: localPos.clone(),
+    parent: modelRoot,  // 记录父对象，方便清理
+    life: 8.0,  // 持续8秒
+    maxLife: 8.0,
+    dripSpeed: 0.15 + Math.random() * 0.1,  // 滴落速度
+  });
+}
+
 function createEgg() {
-  const egg = new THREE.Mesh(
-    new THREE.SphereGeometry(0.12, 16, 16),
-    new THREE.MeshStandardMaterial({ color: 0xfff5cc, roughness: 0.6 })
-  );
+  // 椭球形：用球体然后 scale
+  const eggGeo = new THREE.SphereGeometry(0.12, 16, 16);
+  eggGeo.scale(1, 1.35, 1); // Y 轴拉长成椭球
+
+  const shellTex = createEggShellTexture();
+  const eggMat = new THREE.MeshStandardMaterial({
+    map: shellTex,
+    roughness: 0.7,
+    metalness: 0.0,
+  });
+
+  const egg = new THREE.Mesh(eggGeo, eggMat);
   egg.position.set((Math.random() - 0.5) * 1.2, 0.6, 3);
+
+  // 随机瞄准人物的不同位置（头、胸、肚子等）
+  const targetY = (() => {
+    const r = Math.random();
+    if (r < 0.35) return 1.9 + Math.random() * 0.3;      // 头部区域
+    else if (r < 0.7) return 1.3 + Math.random() * 0.4;  // 胸部区域
+    else return 0.8 + Math.random() * 0.4;                // 肚子区域
+  })();
+  const targetX = (Math.random() - 0.5) * 0.5;  // 左右随机偏移
+  const targetZ = (Math.random() - 0.5) * 0.3;  // 前后随机偏移
 
   egg.userData = {
     t: 0,
     start: egg.position.clone(),
-    end: new THREE.Vector3(0, 2, 0)
+    end: new THREE.Vector3(targetX, targetY, targetZ),
+    isBroken: false,
   };
 
   scene.add(egg);
@@ -1023,9 +1243,19 @@ function createBubble(text, pos){
   sp.scale.set(3.2, 2.8, 1);
   scene.add(sp);
   bubbles.push(sp);
+  return sp;  // 返回 sprite 以便后续调整
 }
-createBubble('压力山大!\n受够了!', new THREE.Vector3(1.6, 2.2, 0));
-createBubble('我要发泄!', new THREE.Vector3(-1.6, 2.0, 0.2));
+// 背景气泡：根据移动端调整位置和大小
+const bubbleScale = isMobile ? 2.0 : 3.2;
+const bubbleY1 = isMobile ? 1.8 : 2.2;
+const bubbleY2 = isMobile ? 1.6 : 2.0;
+const bubbleX1 = isMobile ? 1.0 : 1.6;
+const bubbleX2 = isMobile ? -1.0 : -1.6;
+
+const bubble1 = createBubble('压力山大!\n受够了!', new THREE.Vector3(bubbleX1, bubbleY1, 0));
+const bubble2 = createBubble('我要发泄!', new THREE.Vector3(bubbleX2, bubbleY2, 0.2));
+if (bubble1) bubble1.scale.setScalar(bubbleScale);
+if (bubble2) bubble2.scale.setScalar(bubbleScale);
 
 function updateSwirl(time) {
   swirlCtx.clearRect(0,0,256,256);
@@ -1106,6 +1336,14 @@ function resetAfterFlush() {
   person.scale.set(1, 1, 1);
   person.rotation.set(0, 0, 0);
 
+  // 清理所有蛋液
+  for (let i = yolkStains.length - 1; i >= 0; i--) {
+    const stain = yolkStains[i];
+    if (stain.parent) stain.parent.remove(stain.sprite);
+    disposeSprite(stain.sprite);
+    yolkStains.splice(i, 1);
+  }
+
   // 重置水面
   water.scale.set(1, 1, 1);
   water.rotation.set(-Math.PI / 2, 0, 0);
@@ -1179,19 +1417,76 @@ function animate() {
   // 更新鸡蛋
   for (let i = eggs.length - 1; i >= 0; i--) {
     const egg = eggs[i];
+    
+    // 破碎后只更新旋转，不再移动
+    if (egg.userData.isBroken) {
+      egg.rotation.x += 0.2;
+      egg.rotation.z += 0.2;
+      
+      // 破碎后停留 0.4 秒再移除
+      if (performance.now() - egg.userData.brokenTime > 400) {
+        scene.remove(egg);
+        eggs.splice(i, 1);
+      }
+      continue;
+    }
+    
     egg.userData.t += dt * 1.2;
     const t = egg.userData.t;
-    egg.position.lerpVectors(egg.userData.start, egg.userData.end, t);
-    egg.position.y += Math.sin(Math.PI * t) * 1.5;
-    egg.rotation.x += 0.2;
-    egg.rotation.z += 0.2;
-    if (t >= 1) {
-      scene.remove(egg);
-      eggs.splice(i, 1);
+    
+    // 受击提前触发（t >= 0.85），避免穿模到模型内部
+    if (t >= 0.85) {
+      // 受击：生成蛋黄纹理并应用到鸡蛋
+      egg.userData.isBroken = true;
+      const yolkTex = createYolkTexture();
+      egg.material.map = yolkTex;
+      egg.material.needsUpdate = true;
+      egg.userData.brokenTime = performance.now();
+      
+      // 停在受击位置（提前计算，避免穿模）
+      const hitT = 0.85;
+      const hitPos = egg.userData.start.clone().lerp(egg.userData.end, hitT);
+      hitPos.y += Math.sin(Math.PI * hitT) * 1.5;
+      egg.position.copy(hitPos);
+      
+      // 在人物身上生成蛋液贴图
+      spawnYolkStainOnPerson(hitPos);
+      
       shake = 0.3;
       if (mixer && hitClips.length) playRandomHitReaction();
       else triggerProceduralHit();
       spawnHitReplyBubble();
+      continue;
+    }
+    
+    // 正常飞行轨迹
+    egg.position.lerpVectors(egg.userData.start, egg.userData.end, t);
+    egg.position.y += Math.sin(Math.PI * t) * 1.5;
+    egg.rotation.x += 0.2;
+    egg.rotation.z += 0.2;
+  }
+
+  // 更新人物身上的蛋液效果（滴落 + 淡出）
+  for (let i = yolkStains.length - 1; i >= 0; i--) {
+    const stain = yolkStains[i];
+    stain.life -= dt;
+    
+    // 滴落效果：向下移动
+    stain.localPos.y -= dt * stain.dripSpeed;
+    stain.sprite.position.copy(stain.localPos);
+    
+    // 淡出效果
+    const fadeOut = clamp(stain.life / stain.maxLife, 0, 1);
+    stain.sprite.material.opacity = fadeOut * 0.9;
+    
+    // 轻微缩放（模拟扩散）
+    const scale = 0.4 + (1 - fadeOut) * 0.2;
+    stain.sprite.scale.set(scale, scale * 1.25, 1);
+    
+    if (stain.life <= 0) {
+      if (stain.parent) stain.parent.remove(stain.sprite);
+      disposeSprite(stain.sprite);
+      yolkStains.splice(i, 1);
     }
   }
 
@@ -1376,10 +1671,11 @@ function updateVoiceEffects(dt) {
     const fadeOut = clamp(1 - Math.max(t2 - 0.4, 0) / 0.6, 0, 1);
     item.sprite.material.opacity = fadeIn * fadeOut;
 
-    // 轻微缩放 & 摆动，卡通感
-    const baseScale = 4.5;
+    // 轻微缩放 & 摆动，卡通感（使用保存的初始缩放）
+    const baseScaleX = item.baseScaleX || 4.5;
+    const baseScaleY = item.baseScaleY || 3.4;
     const pulse = 1 + Math.sin(t2 * Math.PI) * 0.06;
-    item.sprite.scale.set(baseScale * pulse, baseScale * 0.75 * pulse, 1);
+    item.sprite.scale.set(baseScaleX * pulse, baseScaleY * pulse, 1);
     item.sprite.rotation.z = Math.sin(t2 * 3.0) * 0.06;
 
     if (t2 >= 1) {
