@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'https://unpkg.com/three@0.160.0/examples/jsm/libs/meshopt_decoder.module.js';
 
 /* ================= 基础 ================= */
 const canvas = document.getElementById('three');
@@ -145,6 +146,7 @@ setupVoiceSpray();
 
 function loadPersonModel() {
   const loader = new GLTFLoader();
+  loader.setMeshoptDecoder(MeshoptDecoder);
   loader.load(
     'assets/model.glb',
     (gltf) => {
