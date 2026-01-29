@@ -45,26 +45,79 @@ window.addEventListener('resize', updateCameraForViewport);
 updateCameraForViewport();  // 初始化时调用一次
 
 /* ================= 灯光 ================= */
-scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+scene.add(new THREE.AmbientLight(0xffffff, 0.9)); // 人物整体提亮
 
-const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 0.6);
+const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 0.75);
 hemi.position.set(0, 4, 0);
 scene.add(hemi);
 
-const spot = new THREE.SpotLight(0xffffff, 3, 24, Math.PI / 5, 0.4, 1);
+const spot = new THREE.SpotLight(0xffffff, 3.6, 24, Math.PI / 5, 0.4, 1);
 spot.position.set(0, 6, 3);
 spot.target.position.set(0, 1.6, 0);
 scene.add(spot);
 scene.add(spot.target);
 
-const fill = new THREE.DirectionalLight(0xffffff, 0.6);
+const fill = new THREE.DirectionalLight(0xffffff, 0.8);
 fill.position.set(-4, 2, 4);
 scene.add(fill);
 
 /* ================= 舞台地面 ================= */
+function createGroundTexture() {
+  const c = document.createElement('canvas');
+  c.width = 512;
+  c.height = 512;
+  const ctx = c.getContext('2d');
+
+  // 基色（偏暖地面）
+  ctx.fillStyle = '#7a5a3a';
+  ctx.fillRect(0, 0, c.width, c.height);
+
+  // 颗粒噪点
+  for (let i = 0; i < 6000; i++) {
+    const x = Math.random() * c.width;
+    const y = Math.random() * c.height;
+    const a = 0.03 + Math.random() * 0.06;
+    const v = 90 + Math.random() * 50;
+    ctx.fillStyle = `rgba(${v}, ${v * 0.85}, ${v * 0.65}, ${a})`;
+    ctx.fillRect(x, y, 1, 1);
+  }
+
+  // 划痕/纹理线
+  ctx.strokeStyle = 'rgba(40, 25, 15, 0.18)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 120; i++) {
+    const y = Math.random() * c.height;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(c.width, y + (Math.random() - 0.5) * 18);
+    ctx.stroke();
+  }
+
+  // 暗角（更像舞台地面）
+  const g = ctx.createRadialGradient(256, 256, 40, 256, 256, 300);
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(1, 'rgba(0,0,0,0.45)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, c.width, c.height);
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(2.5, 2.5);
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy?.() || 1;
+  tex.needsUpdate = true;
+  return tex;
+}
+
 const stage = new THREE.Mesh(
   new THREE.CircleGeometry(3, 32),
-  new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.8 })
+  new THREE.MeshStandardMaterial({
+    map: createGroundTexture(),
+    color: 0xffffff,
+    roughness: 0.95,
+    metalness: 0.0,
+  })
 );
 stage.rotation.x = -Math.PI / 2;
 scene.add(stage);
@@ -1416,12 +1469,28 @@ function createOrUpdateSignMesh(model) {
 
   if (!signCanvas) {
     signCanvas = document.createElement('canvas');
+    // 画布比例必须和木板几何比例一致，否则文字会被压扁/拉伸
     signCanvas.width = 1024;
     signCanvas.height = 512;
     signCtx = signCanvas.getContext('2d');
     signTex = new THREE.CanvasTexture(signCanvas);
     signTex.colorSpace = THREE.SRGBColorSpace;
     signTex.anisotropy = renderer.capabilities.getMaxAnisotropy?.() || 1;
+  }
+
+  // 根据木板宽高比动态调整 canvas，避免文字“扁”
+  {
+    const targetW = 1024;
+    const aspect = boardW / Math.max(boardH, 0.0001);
+    let targetH = Math.round(targetW / Math.max(aspect, 0.0001));
+    // 限制范围，避免过小/过大
+    targetH = clamp(targetH, 384, 1024);
+    if (signCanvas.width !== targetW || signCanvas.height !== targetH) {
+      signCanvas.width = targetW;
+      signCanvas.height = targetH;
+      signCtx = signCanvas.getContext('2d');
+      signTex.needsUpdate = true;
+    }
   }
 
   if (signMesh) {
