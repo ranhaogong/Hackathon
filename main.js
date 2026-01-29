@@ -286,8 +286,8 @@ function loadPersonModel() {
 // =================配置区域=================
 // 大模型 API 配置（从 Node.js 提取）
 const API_CONFIG = {
-    apiKey: "sk-qoQLpscEnIazHZa2bxfMWgkxQDIT92daHnM7XwizDlfW9oYs", // 你的 Key
-    baseUrl: "http://34.13.73.248:3888/v1", // 接口地址
+    apiKey: "", // 你的 Key
+    baseUrl: "", // 接口地址
     model: "Qwen/Qwen3-8B" // 模型名称
 };
 // =========================================
