@@ -17,6 +17,7 @@
   <canvas id="three"></canvas>
   <button id="voiceBall" class="voice-ball">🎤</button>
   <button id="eggBtn" class="egg-btn">🥚</button>
+  <button id="signBtn" class="sign-btn">📝</button>
 </main>
 
 <div id="voiceModal" class="voice-modal" hidden>
@@ -29,11 +30,20 @@
       <button id="voiceSend" type="button">喷他！</button>
     </div>
   </div>
+</div>
+
+<div id="signModal" class="sign-modal" hidden>
+  <div class="sign-modal-content">
+    <div class="sign-modal-title">输入要写在木板上的字</div>
+    <input id="signText" class="sign-modal-input" type="text" maxlength="20" placeholder="输入文字…" />
+    <div class="sign-modal-actions">
+      <button id="signCancel" type="button">取消</button>
+      <button id="signConfirm" type="button">确定</button>
+    </div>
   </div>
+</div>
 
 <footer class="toolbar">
-  <input id="signText" class="sign-input" type="text" maxlength="20" placeholder="输入要写在木板上的字…" />
-  <button id="signBtn">写到木板</button>
   <button id="flushBtn">🚽 冲走他</button>
 </footer>
 

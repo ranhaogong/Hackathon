@@ -264,7 +264,7 @@ function loadPersonModel() {
       const faceCenter = faceBox.getCenter(new THREE.Vector3());
       const faceWorld = new THREE.Vector3(
         faceCenter.x,
-        faceBox.min.y + faceSize.y * 0.78,
+        faceBox.min.y + faceSize.y * 2.88,  // 从0.78提高到0.88，让终点更高
         faceBox.max.z + Math.max(0.06, faceSize.z * 0.04)
       );
       faceTargetLocal = person.worldToLocal(faceWorld.clone());
@@ -279,19 +279,57 @@ function loadPersonModel() {
 function setupSignUI() {
   const signText = document.getElementById('signText');
   const signBtn = document.getElementById('signBtn');
-  if (!signText || !signBtn) return;
+  const signModal = document.getElementById('signModal');
+  const signConfirm = document.getElementById('signConfirm');
+  const signCancel = document.getElementById('signCancel');
+  
+  if (!signText || !signBtn || !signModal || !signConfirm || !signCancel) return;
 
-  // 初始值
-  signText.value = currentSignText;
+  // 打开模态框
+  const openSignModal = () => {
+    signText.value = currentSignText;
+    signModal.hidden = false;
+    // 聚焦输入框
+    setTimeout(() => {
+      signText.focus();
+      signText.select();
+    }, 100);
+  };
 
+  // 关闭模态框
+  const closeSignModal = () => {
+    signModal.hidden = true;
+  };
+
+  // 提交文字
   const commit = () => {
     currentSignText = (signText.value || '').trim().slice(0, 20) || '...';
     renderSignText(currentSignText);
+    closeSignModal();
   };
 
-  signBtn.addEventListener('click', commit);
+  // 点击按钮打开模态框
+  signBtn.addEventListener('click', openSignModal);
+  
+  // 确定按钮
+  signConfirm.addEventListener('click', commit);
+  
+  // 取消按钮
+  signCancel.addEventListener('click', closeSignModal);
+  
+  // 按Enter键提交
   signText.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') commit();
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      commit();
+    }
+  });
+  
+  // 点击背景关闭
+  signModal.addEventListener('click', (e) => {
+    if (e.target === signModal) {
+      closeSignModal();
+    }
   });
 }
 
@@ -1011,8 +1049,9 @@ function createOrUpdateSignMesh(model) {
   const box = new THREE.Box3().setFromObject(model);
   const size = box.getSize(new THREE.Vector3());
 
-  const boardW = Math.max(0.6, Math.min(1.2, size.x * 0.55));
-  const boardH = Math.max(0.25, Math.min(0.6, size.y * 0.18));
+  // 增大木板尺寸
+  const boardW = Math.max(0.8, Math.min(1.6, size.x * 0.7));  // 从0.55增加到0.7，最大值从1.2增加到1.6
+  const boardH = Math.max(0.35, Math.min(.8, size.y * 0.25));  // 从0.18增加到0.25，最大值从0.6增加到0.8
 
   if (!signCanvas) {
     signCanvas = document.createElement('canvas');
@@ -1036,8 +1075,8 @@ function createOrUpdateSignMesh(model) {
   });
 
   signMesh = new THREE.Mesh(new THREE.PlaneGeometry(boardW, boardH), woodMat);
-  // “胸前”位置：居中偏上，向前一点
-  signMesh.position.set(0, Math.max(2, size.y * 0.58), Math.max(0.25, size.z * 0.35));
+  // “胸前”位置：居中偏上，再往上移动（从0.88增加到0.95）
+  signMesh.position.set(0, Math.max(2.8, size.y * 0.95), Math.max(0.25, size.z * 0.35));
   signMesh.rotation.y = 0; // 默认朝向相机；如果模型面向反了，再调成 Math.PI
   signMesh.renderOrder = 2;
 
@@ -1288,15 +1327,16 @@ function createEgg() {
   const egg = new THREE.Mesh(eggGeo, eggMat);
   egg.position.set((Math.random() - 0.5) * 1.2, 0.6, 3);
 
-  // 随机瞄准人物的不同位置（头、胸、肚子等）
+  // 随机瞄准人物的不同位置（从头到脚都可以，平均高度更高）
   const targetY = (() => {
     const r = Math.random();
-    if (r < 0.35) return 1.9 + Math.random() * 0.3;      // 头部区域
-    else if (r < 0.7) return 1.3 + Math.random() * 0.4;  // 胸部区域
-    else return 0.8 + Math.random() * 0.4;                // 肚子区域
+    if (r < 0.3) return 2.2 + Math.random() * 0.4;      // 头部区域（2.2-2.6）- 30%概率
+    else if (r < 0.65) return 1.4 + Math.random() * 0.6;  // 胸部区域（1.4-2.0）- 35%概率
+    else if (r < 0.9) return 0.8 + Math.random() * 0.6;  // 肚子区域（0.8-1.4）- 25%概率
+    else return 0.2 + Math.random() * 0.6;              // 腿部区域（0.2-0.8）- 10%概率
   })();
-  const targetX = (Math.random() - 0.5) * 0.5;  // 左右随机偏移
-  const targetZ = (Math.random() - 0.5) * 0.3;  // 前后随机偏移
+  const targetX = (Math.random() - 0.5) * 0.6;  // 左右随机偏移（范围增大）
+  const targetZ = (Math.random() - 0.5) * 0.4;  // 前后随机偏移（范围增大）
 
   egg.userData = {
     t: 0,
@@ -1506,6 +1546,9 @@ flushBtn.onclick = () => {
   const startTime = performance.now();
   let lastParticleTime = 0;
   let lastFrameTime = startTime;
+  
+  // z轴偏移参数（增加动态性）
+  let zAxisOffset = 0;  // z轴偏移量
 
   function animateFlush(now) {
     const dt = Math.min((now - lastFrameTime) / 1000, 0.05);  // 限制最大 dt
@@ -1524,13 +1567,30 @@ flushBtn.onclick = () => {
 
     // 第一阶段：原地旋转
     if (isRotating) {
-      // 保持位置不变
-      person.position.copy(startPos);
-      
-      // 加速旋转（越转越快）
+      // z轴偏移动态效果（基于旋转速度的正弦波，模拟陀螺仪效果）
       const rotateSpeed = 0.3 + rotateProgress * 1.5;  // 从0.3加速到1.8
-      person.rotation.y += rotateSpeed;
-      person.rotation.z += rotateSpeed * 0.5;
+      const offsetAmplitude = 0.12 * rotateProgress;  // 随着旋转加速，偏移幅度增大
+      const offsetFrequency = rotateSpeed * 0.5;  // 偏移频率与旋转速度相关
+      
+      // 使用正弦波产生平滑的z轴偏移
+      zAxisOffset = Math.sin(elapsed * offsetFrequency) * offsetAmplitude;
+      // 添加一个慢速的偏移变化，增加动态性
+      zAxisOffset += Math.cos(elapsed * offsetFrequency * 0.7) * offsetAmplitude * 0.5;
+      
+      // 保持x、y位置不变，z轴可以偏移
+      person.position.set(
+        startPos.x,
+        startPos.y,
+        startPos.z + zAxisOffset
+      );
+      
+      // 主要绕z轴旋转（垂直轴），加速旋转（越转越快）
+      person.rotation.z += rotateSpeed;  // 主要绕z轴旋转
+      
+      // 添加非常轻微的x、y轴倾斜，基本保持z轴旋转
+      const tiltAmount = Math.abs(zAxisOffset) * 0.08;  // 大幅减少倾斜量（从0.4减少到0.08）
+      person.rotation.x = Math.sin(person.rotation.z * 2) * tiltAmount;
+      person.rotation.y = Math.cos(person.rotation.z * 2) * tiltAmount * 0.5;
       
       // 轻微缩小（旋转时开始缩小）
       const s = 1 - rotateProgress * 0.3;
@@ -1558,13 +1618,22 @@ flushBtn.onclick = () => {
       // 强缓动（快速被吸入）
       const ease = suckProgress * suckProgress * suckProgress;  // 三次方缓动，加速吸入
       
-      // 从当前位置被吸到脚底
-      person.position.lerpVectors(startPos, footPos, ease);
+      // z轴偏移逐渐减小（被吸走时逐渐稳定）
+      zAxisOffset *= (1 - suckProgress * 0.15);  // 逐渐归零
       
-      // 继续旋转（但速度逐渐减慢）
+      // 从当前位置被吸到脚底（包含z轴偏移）
+      const currentStartPos = new THREE.Vector3(startPos.x, startPos.y, startPos.z + zAxisOffset);
+      const targetFootPos = new THREE.Vector3(footPos.x, footPos.y, footPos.z);
+      person.position.lerpVectors(currentStartPos, targetFootPos, ease);
+      
+      // 继续绕z轴旋转（但速度逐渐减慢）
       const rotateSpeed = 1.8 - suckProgress * 1.5;  // 从1.8减速到0.3
-      person.rotation.y += rotateSpeed;
-      person.rotation.z += rotateSpeed * 0.5;
+      person.rotation.z += rotateSpeed;  // 主要绕z轴旋转
+      
+      // 倾斜逐渐减小（被吸走时逐渐恢复）
+      const tiltFade = 1 - suckProgress;
+      person.rotation.x *= tiltFade;
+      person.rotation.y *= tiltFade;
       
       // 快速缩小
       const baseScale = 0.7;  // 旋转阶段结束时的缩放

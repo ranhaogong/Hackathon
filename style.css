@@ -400,6 +400,23 @@ canvas {
   border: none;
 }
 
+/* 木板按钮：左侧中间，在语音球对面 */
+.sign-btn {
+  position: absolute;
+  left: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  font-size: 26px;
+  border: none;
+  background: rgba(255,255,255,0.9);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  cursor: pointer;
+  z-index: 5;
+}
+
 /* 底部工具栏（以移动端为主） */
 .toolbar {
   padding: 8px 12px env(safe-area-inset-bottom);
@@ -419,23 +436,6 @@ canvas {
   font-size: 15px;
 }
 
-/* 胸前木板文字输入 */
-.sign-input {
-  flex: 1;
-  min-width: 120px;
-  height: 40px;
-  padding: 0 10px;
-  border-radius: 10px;
-  border: 1px solid rgba(255,255,255,0.25);
-  background: rgba(255,255,255,0.92);
-  font-size: 14px;
-  outline: none;
-}
-
-.sign-input::placeholder {
-  color: rgba(0,0,0,0.45);
-}
-
 /* 小屏（手机）优先适配：底部内容竖排，保证不被遮挡 */
 @media (max-width: 480px) {
   .toolbar {
@@ -448,8 +448,7 @@ canvas {
     gap: 10px; /* 使用gap替代margin-bottom */
   }
 
-  .toolbar button,
-  .sign-input {
+  .toolbar button {
     width: 100%;
     max-width: none;
     min-height: 48px; /* 确保触摸目标足够大（iOS推荐44px+） */
@@ -477,14 +476,6 @@ canvas {
     border: 1px solid rgba(255,75,75,0.5);
   }
   
-  /* 输入框样式 */
-  .sign-input {
-    background: rgba(255,255,255,0.95);
-    border: 1px solid rgba(255,255,255,0.4);
-    border-radius: 12px;
-    color: #333;
-  }
-
   .egg-btn {
     bottom: 140px; /* 根据新的工具栏高度调整（3个元素，每个约48px+间距） */
   }
@@ -559,5 +550,79 @@ canvas {
 
 .voice-modal-actions #voiceSend {
   background: #ff4b4b;
+  color: #fff;
+}
+
+/* 木板输入弹窗 */
+.sign-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 20;
+}
+
+.sign-modal[hidden] {
+  display: none;
+}
+
+.sign-modal-content {
+  width: 100%;
+  max-width: 480px;
+  margin: 0 8px;
+  margin-bottom: env(safe-area-inset-bottom, 0);
+  background: rgba(255,255,255,0.98);
+  border-radius: 16px 16px 0 0;
+  padding: 12px 14px 10px;
+  box-shadow: 0 -4px 14px rgba(0,0,0,0.18);
+}
+
+.sign-modal-title {
+  font-size: 14px;
+  color: #444;
+  margin-bottom: 6px;
+}
+
+.sign-modal-input {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid #ddd;
+  padding: 10px 12px;
+  font-size: 16px;
+  line-height: 1.4;
+  box-sizing: border-box;
+  outline: none;
+}
+
+.sign-modal-input::placeholder {
+  color: #999;
+}
+
+.sign-modal-actions {
+  margin-top: 8px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.sign-modal-actions button {
+  flex: 0 0 auto;
+  min-width: 80px;
+  height: 36px;
+  border-radius: 999px;
+  border: none;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.sign-modal-actions #signCancel {
+  background: #eee;
+  color: #333;
+}
+
+.sign-modal-actions #signConfirm {
+  background: #4b9eff;
   color: #fff;
 }
