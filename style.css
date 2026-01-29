@@ -409,6 +409,8 @@ canvas {
   gap: 8px;
   align-items: center;
   justify-content: space-between;
+  position: relative;
+  z-index: 10; /* 确保在canvas之上 */
 }
 
 .toolbar button {
@@ -440,16 +442,51 @@ canvas {
     flex-direction: column;
     align-items: stretch;
     justify-content: flex-start;
+    min-height: auto; /* 允许自动调整高度 */
+    height: auto; /* 移除固定高度 */
+    padding: 12px 12px calc(12px + env(safe-area-inset-bottom)); /* 增加内边距，包括安全区域 */
+    gap: 10px; /* 使用gap替代margin-bottom */
   }
 
   .toolbar button,
   .sign-input {
     width: 100%;
     max-width: none;
+    min-height: 48px; /* 确保触摸目标足够大（iOS推荐44px+） */
+    height: auto; /* 允许自动调整 */
+    padding: 12px 16px; /* 增加内边距，便于点击 */
+    font-size: 16px; /* 移动端字体稍大 */
+    margin: 0; /* 移除margin，使用gap */
+    box-sizing: border-box; /* 确保padding计算正确 */
+  }
+  
+  /* 确保按钮有足够的对比度和可见性 */
+  .toolbar button {
+    background: rgba(255,255,255,0.95);
+    color: #333;
+    border: 1px solid rgba(255,255,255,0.3);
+    font-weight: 500;
+    border-radius: 12px; /* 圆角 */
+    cursor: pointer;
+    -webkit-tap-highlight-color: rgba(0,0,0,0.1); /* 点击高亮 */
+  }
+  
+  #flushBtn {
+    background: rgba(255,75,75,0.95);
+    color: #fff;
+    border: 1px solid rgba(255,75,75,0.5);
+  }
+  
+  /* 输入框样式 */
+  .sign-input {
+    background: rgba(255,255,255,0.95);
+    border: 1px solid rgba(255,255,255,0.4);
+    border-radius: 12px;
+    color: #333;
   }
 
   .egg-btn {
-    bottom: 104px; /* 稍微再高一点，避开更高的底部栏 */
+    bottom: 140px; /* 根据新的工具栏高度调整（3个元素，每个约48px+间距） */
   }
 }
 

@@ -1408,18 +1408,50 @@ const bubble2 = createBubble('我要发泄!', new THREE.Vector3(bubbleX2, bubble
 if (bubble1) bubble1.scale.setScalar(bubbleScale);
 if (bubble2) bubble2.scale.setScalar(bubbleScale);
 
-function updateSwirl(time) {
+function updateSwirl(time, flushIntensity = 0) {
   swirlCtx.clearRect(0,0,256,256);
   swirlCtx.translate(128,128);
-  swirlCtx.rotate(time * 0.002);
+  
+  // 冲走时旋转更快
+  const baseSpeed = 0.002;
+  const flushSpeed = baseSpeed * (1 + flushIntensity * 5);  // 旋转更快
+  swirlCtx.rotate(time * flushSpeed);
 
-  const g = swirlCtx.createRadialGradient(0,0,10,0,0,120);
-  g.addColorStop(0,'rgba(255,255,255,0.8)');
-  g.addColorStop(1,'rgba(100,100,255,0.1)');
+  // 冲走时漩涡更明显、更亮、更大
+  const centerAlpha = 0.9 + flushIntensity * 0.1;
+  const edgeAlpha = 0.2 + flushIntensity * 0.5;
+  const radius = 120 + flushIntensity * 30;  // 漩涡范围更大
+  const g = swirlCtx.createRadialGradient(0,0,10,0,0,radius);
+  g.addColorStop(0,`rgba(255,255,255,${centerAlpha})`);
+  g.addColorStop(0.3,`rgba(180,220,255,${0.6 + flushIntensity * 0.4})`);
+  g.addColorStop(0.6,`rgba(120,180,255,${0.5 + flushIntensity * 0.4})`);
+  g.addColorStop(1,`rgba(100,150,255,${edgeAlpha})`);
   swirlCtx.fillStyle = g;
   swirlCtx.beginPath();
-  swirlCtx.arc(0,0,120,0,Math.PI*2);
+  swirlCtx.arc(0,0,radius,0,Math.PI*2);
   swirlCtx.fill();
+
+  // 冲走时添加更多螺旋线条增强效果
+  if (flushIntensity > 0) {
+    swirlCtx.strokeStyle = `rgba(200,230,255,${flushIntensity * 0.8})`;
+    swirlCtx.lineWidth = 4 + flushIntensity * 4;  // 线条更粗
+    for (let i = 0; i < 5; i++) {  // 更多线条
+      const angle = (time * flushSpeed * 1000 + i * Math.PI * 2 / 5) % (Math.PI * 2);
+      swirlCtx.beginPath();
+      swirlCtx.moveTo(0, 0);
+      swirlCtx.lineTo(Math.cos(angle) * radius, Math.sin(angle) * radius);
+      swirlCtx.stroke();
+    }
+    
+    // 添加外圈波纹
+    swirlCtx.strokeStyle = `rgba(150,200,255,${flushIntensity * 0.5})`;
+    swirlCtx.lineWidth = 2;
+    for (let r = 80; r <= radius; r += 15) {
+      swirlCtx.beginPath();
+      swirlCtx.arc(0, 0, r, 0, Math.PI * 2);
+      swirlCtx.stroke();
+    }
+  }
 
   swirlCtx.setTransform(1,0,0,1,0,0);
   swirlTex.needsUpdate = true;
@@ -1429,6 +1461,10 @@ function updateSwirl(time) {
 /* ================= 冲走（修复 & 强化） ================= */
 const flushBtn = document.getElementById('flushBtn');
 let isFlushing = false;
+
+// 冲走时的水流粒子效果
+const flushParticles = [];
+const flushSplashes = [];
 
 flushBtn.onclick = () => {
   if (isFlushing) return;
@@ -1444,6 +1480,20 @@ flushBtn.onclick = () => {
 
   playFlushSound();
 
+  // 清理旧粒子
+  flushParticles.forEach(p => {
+    scene.remove(p.mesh);
+    p.mesh.geometry.dispose();
+    p.mesh.material.dispose();
+  });
+  flushParticles.length = 0;
+  flushSplashes.forEach(s => {
+    scene.remove(s.mesh);
+    s.mesh.geometry.dispose();
+    s.mesh.material.dispose();
+  });
+  flushSplashes.length = 0;
+
   const startPos = person.position.clone();
   const startScale = person.scale.clone();
   const startRot = person.rotation.clone();
@@ -1451,8 +1501,12 @@ flushBtn.onclick = () => {
   const targetPos = new THREE.Vector3(0, 0.35, -0.8);
   const duration = 1200;
   const startTime = performance.now();
+  let lastParticleTime = 0;
+  let lastFrameTime = startTime;
 
   function animateFlush(now) {
+    const dt = Math.min((now - lastFrameTime) / 1000, 0.05);  // 限制最大 dt
+    lastFrameTime = now;
     const elapsed = now - startTime;
     const t = Math.min(elapsed / duration, 1);
 
@@ -1470,9 +1524,21 @@ flushBtn.onclick = () => {
     person.rotation.y += 0.5;
     person.rotation.z += 0.25;
 
-    // 🚿 冲水强化：旋涡加速 + 放大
-    water.scale.setScalar(1 + ease * 0.6);
-    water.rotation.z -= 0.4;
+    // 🚿 冲水强化：旋涡加速 + 放大（更大）
+    water.scale.setScalar(1 + ease * 1.0);  // 放大更多
+    water.rotation.z -= 0.6;  // 旋转更快
+    
+    // 更新漩涡视觉效果（冲走时更明显）
+    updateSwirl(now, ease);
+
+    // 生成水流粒子（持续生成，更频繁）
+    if (elapsed - lastParticleTime > 20) {  // 每20ms生成一批（更频繁）
+      lastParticleTime = elapsed;
+      spawnFlushParticles(targetPos, ease);
+    }
+
+    // 更新水流粒子
+    updateFlushParticles(dt, targetPos, ease);
 
     if (t < 1) {
       requestAnimationFrame(animateFlush);
@@ -1486,6 +1552,135 @@ flushBtn.onclick = () => {
 
   requestAnimationFrame(animateFlush);
 };
+
+function spawnFlushParticles(targetPos, intensity) {
+  // 从马桶位置生成水流粒子
+  const toiletPos = new THREE.Vector3(0, 0.46, -0.8);
+  const count = Math.floor(6 + intensity * 12);  // 强度越大粒子越多（增大）
+
+  for (let i = 0; i < count; i++) {
+    const particle = new THREE.Mesh(
+      new THREE.SphereGeometry(0.06 + Math.random() * 0.04, 8, 8),  // 粒子更大
+      new THREE.MeshStandardMaterial({
+        color: 0x88ccff,
+        transparent: true,
+        opacity: 0.8,
+        emissive: 0x44aaff,
+        emissiveIntensity: 0.7,  // 更亮
+      })
+    );
+
+    // 从马桶向上喷射，然后被吸入
+    const angle = (i / count) * Math.PI * 2;
+    const radius = 0.2 + Math.random() * 0.15;  // 喷射范围更大
+    particle.position.set(
+      toiletPos.x + Math.cos(angle) * radius,
+      toiletPos.y + Math.random() * 0.3,
+      toiletPos.z + Math.sin(angle) * radius
+    );
+
+    const vel = new THREE.Vector3(
+      (Math.random() - 0.5) * 0.5,  // 速度更大
+      0.6 + Math.random() * 0.5,   // 向上速度更大
+      (Math.random() - 0.5) * 0.5
+    );
+
+    scene.add(particle);
+    flushParticles.push({
+      mesh: particle,
+      vel,
+      life: 1.0 + Math.random() * 0.5,  // 生命周期更长
+      maxLife: 1.0 + Math.random() * 0.5,
+    });
+  }
+}
+
+function updateFlushParticles(dt, targetPos = null, intensity = 0) {
+  for (let i = flushParticles.length - 1; i >= 0; i--) {
+    const p = flushParticles[i];
+    p.life -= dt;
+
+    // 如果有目标位置，粒子被吸入（吸入力更大）
+    if (targetPos) {
+      const toTarget = targetPos.clone().sub(p.mesh.position);
+      const pullStrength = intensity * 4.0;  // 吸入力更大
+      p.vel.addScaledVector(toTarget.normalize(), pullStrength * dt);
+    }
+    p.vel.multiplyScalar(0.92);  // 阻尼
+    p.vel.y -= 2.0 * dt;  // 轻微重力
+
+    p.mesh.position.addScaledVector(p.vel, dt);
+    p.mesh.rotation.x += dt * 2;
+    p.mesh.rotation.y += dt * 1.5;
+
+    // 淡出
+    p.mesh.material.opacity = Math.max(p.life / p.maxLife * 0.8, 0);
+    p.mesh.scale.setScalar(0.8 + (p.life / p.maxLife) * 0.7);  // 初始更大
+
+    if (p.life <= 0 || (targetPos && p.mesh.position.distanceTo(targetPos) < 0.2)) {
+      scene.remove(p.mesh);
+      p.mesh.geometry.dispose();
+      p.mesh.material.dispose();
+      flushParticles.splice(i, 1);
+    }
+  }
+
+  // 生成水花飞溅效果（在目标位置，仅在冲走时）
+  if (targetPos && intensity > 0 && Math.random() < intensity * 0.6) {  // 生成频率更高
+    const splash = new THREE.Mesh(
+      new THREE.SphereGeometry(0.1 + Math.random() * 0.05, 8, 8),  // 水花更大
+      new THREE.MeshStandardMaterial({
+        color: 0xaaccff,
+        transparent: true,
+        opacity: 0.7,
+        emissive: 0x66bbff,
+        emissiveIntensity: 1.0,  // 更亮
+      })
+    );
+    splash.position.copy(targetPos);
+    splash.position.add(new THREE.Vector3(
+      (Math.random() - 0.5) * 0.5,  // 范围更大
+      (Math.random() - 0.5) * 0.3,
+      (Math.random() - 0.5) * 0.5
+    ));
+
+    const splashVel = new THREE.Vector3(
+      (Math.random() - 0.5) * 2.5,  // 速度更大
+      Math.random() * 1.2,
+      (Math.random() - 0.5) * 2.5
+    );
+
+    const baseScale = 1.3 + Math.random() * 0.4;  // 初始更大
+    splash.scale.setScalar(baseScale);
+    splash.userData.baseScale = baseScale;  // 保存初始缩放
+    scene.add(splash);
+    flushSplashes.push({
+      mesh: splash,
+      vel: splashVel,
+      life: 0.5 + Math.random() * 0.3,  // 生命周期更长
+      maxLife: 0.5 + Math.random() * 0.3,
+    });
+  }
+
+  // 更新水花
+  for (let i = flushSplashes.length - 1; i >= 0; i--) {
+    const s = flushSplashes[i];
+    s.life -= dt;
+    s.vel.y -= 9.8 * dt;  // 重力
+    s.mesh.position.addScaledVector(s.vel, dt);
+    s.mesh.material.opacity = Math.max(s.life / s.maxLife * 0.7, 0);
+    // 从初始大小逐渐缩小
+    const baseScale = s.mesh.userData.baseScale || 1.2;
+    s.mesh.scale.setScalar(baseScale * (0.3 + (s.life / s.maxLife) * 0.7));
+
+    if (s.life <= 0) {
+      scene.remove(s.mesh);
+      s.mesh.geometry.dispose();
+      s.mesh.material.dispose();
+      flushSplashes.splice(i, 1);
+    }
+  }
+}
 
 function resetAfterFlush() {
   // 先让人物“消失”，再在 3 秒后重新出现
@@ -1501,6 +1696,22 @@ function resetAfterFlush() {
     disposeSprite(stain.sprite);
     yolkStains.splice(i, 1);
   }
+
+  // 清理所有水流粒子（延迟清理，让粒子自然消失）
+  setTimeout(() => {
+    flushParticles.forEach(p => {
+      scene.remove(p.mesh);
+      p.mesh.geometry.dispose();
+      p.mesh.material.dispose();
+    });
+    flushParticles.length = 0;
+    flushSplashes.forEach(s => {
+      scene.remove(s.mesh);
+      s.mesh.geometry.dispose();
+      s.mesh.material.dispose();
+    });
+    flushSplashes.length = 0;
+  }, 500);
 
   // 重置水面
   water.scale.set(1, 1, 1);
@@ -1707,6 +1918,11 @@ function animate() {
   });
 
   updateVoiceEffects(dt);
+
+  // 更新水流粒子（清理残留）
+  if (flushParticles.length > 0 || flushSplashes.length > 0) {
+    updateFlushParticles(dt);
+  }
 
   renderer.render(scene, camera);
 }
