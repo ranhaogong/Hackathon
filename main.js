@@ -773,7 +773,8 @@ async function startVoiceRecording() {
   currentLoudness = 0;
   peakLoudness = 0;
 
-  liveVoiceText = '...';
+  // 录音开始：先提示用户说话；识别到文本后会自动覆盖
+  liveVoiceText = '请说话…';
   ensureLiveVoiceSprite();
   updateLiveVoiceSprite(liveVoiceText);
 
@@ -910,7 +911,7 @@ function stopVoiceRecording() {
 
 function ensureLiveVoiceSprite() {
   if (liveVoiceSprite) return;
-  liveVoiceSprite = createTextBubbleSprite('...', {
+  liveVoiceSprite = createTextBubbleSprite('请说话…', {
     fontSize: 44,
     padding: 46,
     maxWidth: 420,
