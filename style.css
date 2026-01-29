@@ -531,6 +531,12 @@ canvas {
 
 /* 小屏（手机）优先适配：底部内容竖排，保证不被遮挡 */
 @media (max-width: 480px) {
+  /* 移动端：名称(📝)按钮上移，避免和🍅重叠 */
+  .sign-btn {
+    top: 38%;
+    transform: translateY(-50%);
+  }
+
   .toolbar {
     flex-direction: column;
     align-items: stretch;
